@@ -1,4 +1,6 @@
 import socket
+import struct
+
 import cv2
 import numpy as np
 
@@ -10,6 +12,21 @@ SERVER_PORT = 5005
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server_socket.bind((SERVER_IP, SERVER_PORT))
 server_socket.listen(1)
+
+data_header_format = 'I'
+data_header_size = struct.calcsize(data_header_format)
+
+
+def recv_bytes_tcp(sock: socket.socket):
+    header = struct.unpack(data_header_format, sock.recv(data_header_size))
+    data_size = header[0]
+    data = bytearray(data_size)
+    ptr = memoryview(data)
+    while data_size:
+        nrecv = sock.recv_into(buffer=ptr, nbytes=min(4096, data_size))
+        ptr = ptr[nrecv:]
+        data_size -= nrecv
+    return data
 
 
 def decompress_image(data):
@@ -24,10 +41,10 @@ def decompress_image(data):
 def display_screen(conn):
     while True:
         # 接收数据长度
-        data_length = int.from_bytes(conn.recv(4), byteorder='big')
+        # data_length = int.from_bytes(conn.recv(4), byteorder='big')
         # 接收数据
         # todo: cannot ensure that recv() can receive data_length bytes each time
-        data = conn.recv(data_length)
+        data = recv_bytes_tcp(conn)
         frame = decompress_image(data)
         # 显示图像
         if frame.shape[0] > 0 and frame.shape[1] > 0:

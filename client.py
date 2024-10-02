@@ -2,11 +2,20 @@ import socket
 import cv2
 import numpy as np
 import pyaudio
+import struct
+
+data_header_format = 'I'
+data_header_size = struct.calcsize(data_header_format)
+
+buffer_size = 4096  # 可以根据实际情况调整这个值
+
 
 def send_large_data(sock, data, address):
-   buffer_size = 4096  # 可以根据实际情况调整这个值
-   for i in range(0, len(data), buffer_size):
-       sock.sendto(data[i:i+buffer_size], address)
+    header = struct.pack(data_header_format, len(data))
+    sock.sendto(header, address)
+    for i in range(0, len(data), buffer_size):
+        sock.sendto(data[i:i + buffer_size], address)
+
 
 # 初始化socket，使用UDP协议
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -26,7 +35,7 @@ RATE = 44100
 audio = pyaudio.PyAudio()
 stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
 
-print("客户端正在发送数据...")
+print("Start sending data...")
 
 while True:
     # 捕获视频帧
