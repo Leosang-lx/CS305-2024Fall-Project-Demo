@@ -1,20 +1,22 @@
 import socket
-import struct
-
-import cv2
 import numpy as np
-
-# 设置服务器地址和端口
-SERVER_IP = "127.0.0.1"
-SERVER_PORT = 5005
+from util_test import *
 
 # 创建一个TCP socket
-server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server_socket.bind((SERVER_IP, SERVER_PORT))
-server_socket.listen(1)
+server_socket_video = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket_video.bind((SERVER_IP, SERVER_PORT_main))
+server_socket_video.listen(1)
 
-data_header_format = 'I'
-data_header_size = struct.calcsize(data_header_format)
+if seperate_transmission:
+    # todo: 尝试隔离发送
+    # 一个连接发送屏幕，一个连接发送摄像头
+    camera_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    camera_socket.bind((SERVER_IP, SERVER_PORT_main))
+    camera_socket.listen(1)
+    # todo: 尝试声音发送，先实现直接统一按帧发送
+    voice_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    voice_socket.bind((SERVER_IP, SERVER_PORT_main))
+    voice_socket.listen(1)
 
 
 def recv_bytes_tcp(sock: socket.socket):
@@ -58,7 +60,7 @@ def display_screen(conn):
 
 
 if __name__ == "__main__":
-    conn, addr = server_socket.accept()
+    conn, addr = server_socket_video.accept()
     print(f"Connected by {addr}")
     display_screen(conn)
     conn.close()

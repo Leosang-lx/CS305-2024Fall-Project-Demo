@@ -3,6 +3,8 @@ import sounddevice as sd
 import queue
 import threading
 
+from audio.send_audio import send_audio_data
+
 CHUNK = 1024
 FORMAT = pyaudio.paInt16
 CHANNELS = 1  # 单声道

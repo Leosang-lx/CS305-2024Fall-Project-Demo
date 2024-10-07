@@ -1,29 +1,43 @@
-import struct
-
 import pyautogui
 import numpy as np
-import cv2
 import socket
-from PIL import Image
-from io import BytesIO
+from util_test import *
 import time
 
-# 设置服务器地址和端口
-SERVER_IP = "127.0.0.1"
-SERVER_PORT = 5005
-
 # 创建一个TCP socket
-sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.connect((SERVER_IP, SERVER_PORT))
+client_socket_video = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+client_socket_video.connect((SERVER_IP, SERVER_PORT_main))
 
-data_header_format = 'I'
-data_header_size = struct.calcsize(data_header_format)
+if seperate_transmission:
+    # todo: 尝试隔离发送
+    # 一个连接发送屏幕，一个连接发送摄像头
+    camera_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    camera_socket.connect((SERVER_IP, server_port_camera))
+    # todo: 尝试声音发送，先实现直接统一按帧发送
+    voice_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    voice_socket.connect((SERVER_IP, server_port_voice))
 
 
 def capture_screen():
-    # 捕获整个屏幕
+    # 按照当前显示器的分辨率捕获整个屏幕
     img = pyautogui.screenshot()
     return img
+
+
+camera_width, camera_height = 640, 480
+
+# 初始化摄像头
+cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_width)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_height)
+
+
+def capture_camera():
+    # 捕获视频帧
+    ret, frame = cap.read()
+    if not ret:
+        raise Exception('Fail to capture frame from camera')
+    return frame
 
 
 def compress_image(img):
@@ -45,7 +59,7 @@ def send_bytes_tcp(sock: socket.socket, bytes_data):
     return res
 
 
-def send_screen(fps=10):
+def send_frames(share_screen, share_camera, fps=10):
     frame_interval = 1 / fps  # 计算每帧之间的间隔时间
     last_frame_time = time.time()
     while True:
@@ -54,19 +68,26 @@ def send_screen(fps=10):
 
         if elapsed_time >= frame_interval:
             # 捕获屏幕
-            img = capture_screen()
+            if share_screen:
+                screen_frame = np.array(capture_screen())
+            else:
+                screen_frame = None
+            if share_camera:
+                camera_frame = capture_camera()
+            else:
+                camera_frame = None
+            # 屏幕图像与摄像头图像混合之后再发送
+            frame_to_send = overlay_camera_on_screen(screen_frame, camera_frame)
             # 压缩图像
-            compressed_img = compress_image(img)
+            compressed_img = compress_image(frame_to_send)
             print(len(compressed_img), 'bytes')
-            send_bytes_tcp(sock, compressed_img)
-            # 发送数据长度
-            # sock.sendall(len(compressed_img).to_bytes(4, byteorder='big'))
-            # 发送数据
-            # sock.sendall(compressed_img)
+            send_bytes_tcp(client_socket_video, compressed_img)
 
             # 更新上一帧的时间
             last_frame_time = current_time
 
 
 if __name__ == "__main__":
-    send_screen(fps=30)  # 限制帧率为10 FPS
+    share_screen = True
+    share_camera = True
+    send_frames(share_screen, share_camera, fps=10)  # 限制帧率为10 FPS

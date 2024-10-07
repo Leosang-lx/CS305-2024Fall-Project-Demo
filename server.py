@@ -8,6 +8,9 @@ import struct
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 server_socket.bind(('127.0.0.1', 9999))
 
+recv_video = False
+recv_voice = True
+
 # 视频帧大小
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
@@ -20,8 +23,9 @@ RATE = 44100
 
 buffer_size = 4096  # 可以根据实际情况调整这个值
 
-audio = pyaudio.PyAudio()
-stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True, frames_per_buffer=CHUNK)
+if recv_voice:
+    audio = pyaudio.PyAudio()
+    stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True, frames_per_buffer=CHUNK)
 
 data_header_format = 'I'
 data_header_size = struct.calcsize(data_header_format)
@@ -49,16 +53,19 @@ print("Start recving data...")
 while True:
     # 接收视频帧数据
     # todo: split the data into multiple udp datagrams, merge them when recving
-    frame_data, addr = server_socket.recvfrom(65535)
-    npdata = np.frombuffer(frame_data, dtype=np.uint8)
-    frame = np.reshape(npdata, (FRAME_HEIGHT, FRAME_WIDTH, 3))
 
-    # 显示接收的视频帧
-    cv2.imshow('Received Video', frame)
+    if recv_video:
+        frame_data, addr = server_socket.recvfrom(65535)
+        npdata = np.frombuffer(frame_data, dtype=np.uint8)
+        frame = np.reshape(npdata, (FRAME_HEIGHT, FRAME_WIDTH, 3))
 
-    # 接收音频数据
-    audio_data, addr = server_socket.recvfrom(CHUNK * 2)
-    stream.write(audio_data)
+        # 显示接收的视频帧
+        cv2.imshow('Received Video', frame)
+
+    if recv_voice:
+        # 接收音频数据
+        audio_data, addr = server_socket.recvfrom(CHUNK * 2)
+        stream.write(audio_data)
 
     # 按下 'q' 键退出
     if cv2.waitKey(1) & 0xFF == ord('q'):
