@@ -2,7 +2,8 @@ import cv2
 import struct
 
 # 设置服务器地址和端口
-SERVER_IP = "127.0.0.1"
+# SERVER_IP = "127.0.0.1"
+SERVER_IP = "192.168.1.134"
 SERVER_PORT_main = 5005
 
 seperate_transmission = True

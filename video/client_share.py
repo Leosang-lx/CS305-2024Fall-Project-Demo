@@ -14,8 +14,8 @@ if seperate_transmission:
     camera_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     camera_socket.connect((SERVER_IP, server_port_camera))
     # todo: 尝试声音发送，先实现直接统一按帧发送
-    voice_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    voice_socket.connect((SERVER_IP, server_port_voice))
+    # voice_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # voice_socket.connect((SERVER_IP, server_port_voice))
 
 
 def capture_screen():
@@ -77,11 +77,19 @@ def send_frames(share_screen, share_camera, fps=10):
             else:
                 camera_frame = None
             # 屏幕图像与摄像头图像混合之后再发送
-            frame_to_send = overlay_camera_on_screen(screen_frame, camera_frame)
-            # 压缩图像
-            compressed_img = compress_image(frame_to_send)
-            print(len(compressed_img), 'bytes')
-            send_bytes_tcp(client_socket_video, compressed_img)
+            if seperate_transmission:
+                if share_screen:
+                    compressed_screen = compress_image(screen_frame)
+                    send_bytes_tcp(client_socket_video, compressed_screen)
+                if share_camera:
+                    compressed_camera = compress_image(camera_frame)
+                    send_bytes_tcp(camera_socket, compressed_camera)
+            else:
+                frame_to_send = overlay_camera_on_screen(screen_frame, camera_frame)
+                # 压缩图像
+                compressed_img = compress_image(frame_to_send)
+                print(len(compressed_img), 'bytes')
+                send_bytes_tcp(client_socket_video, compressed_img)
 
             # 更新上一帧的时间
             last_frame_time = current_time
