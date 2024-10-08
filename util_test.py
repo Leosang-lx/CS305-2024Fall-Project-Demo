@@ -1,14 +1,25 @@
 import cv2
 import struct
+import pyaudio
 
 # 设置服务器地址和端口
-# SERVER_IP = "127.0.0.1"
-SERVER_IP = "192.168.1.134"
+SERVER_IP = "127.0.0.1"
+# SERVER_IP = "192.168.1.134"
 SERVER_PORT_main = 5005
 
 seperate_transmission = True
 server_port_camera = 5006
 server_port_voice = 5007
+
+share_screen = True
+share_camera = True
+share_audio = False
+
+# 初始化音频
+CHUNK = 1024
+FORMAT = pyaudio.paInt16  # 采样位宽16bit
+CHANNELS = 1  # 声道数
+RATE = 44100  # 采样率
 
 data_header_format = 'I'
 data_header_size = struct.calcsize(data_header_format)
@@ -48,8 +59,8 @@ def overlay_camera_on_screen(screen_img, camera_img, position=(0, 0), resize_cam
         y_offset = screen_img.shape[0] - camera_img.shape[0]
 
     # 创建ROI并放置摄像头图像
-    roi = screen_img[y_offset:y_offset + camera_img.shape[0],
-          x_offset:x_offset + camera_img.shape[1]]
+    # roi = screen_img[y_offset:y_offset + camera_img.shape[0],
+    #       x_offset:x_offset + camera_img.shape[1]]
     screen_img[y_offset:y_offset + camera_img.shape[0], x_offset:x_offset + camera_img.shape[1]] = camera_img
 
     # 返回合并后的图像

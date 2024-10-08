@@ -10,16 +10,20 @@ server_socket_video = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server_socket_video.bind((SERVER_IP, SERVER_PORT_main))
 server_socket_video.listen(1)
 
-if seperate_transmission:
-    # todo: 尝试隔离发送
-    # 一个连接发送屏幕，一个连接发送摄像头
-    camera_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    camera_socket.bind((SERVER_IP, server_port_camera))
-    camera_socket.listen(1)
-    # todo: 尝试声音发送，先实现直接统一按帧发送
-    # voice_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # voice_socket.bind((SERVER_IP, SERVER_PORT_main))
-    # voice_socket.listen(1)
+audio = pyaudio.PyAudio()
+# streamin = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+streamout = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True, frames_per_buffer=CHUNK)
+
+
+# 不同数据源隔离发送
+# 一个连接发送屏幕，一个连接发送摄像头
+camera_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+camera_socket.bind((SERVER_IP, server_port_camera))
+camera_socket.listen(1)
+# 声音发送，先实现直接统一按帧发送
+audio_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # use UDP to transmit audio
+audio_socket.bind((SERVER_IP, server_port_voice))
+# voice_socket.listen(1)
 
 
 def recv_bytes_tcp(sock: socket.socket):
@@ -70,11 +74,18 @@ def keep_recv_camera(recv_socket, running):
             raise ValueError("解压缩后的图像尺寸无效")
 
 
-def display_recv_frames(screen_socket, camera_socket):
+def keep_recv_audio(recv_socket, running):
+    while running:
+        audio_chunk, addr = recv_socket.recvfrom(65535)
+        assert len(audio_chunk) == CHUNK * 2
+        streamout.write(audio_chunk)
+
+
+def display_recv_frames(screen_socket, camera_socket, running):
     global recv_screen, recv_camera
     last_screen_tag = None
     last_camera_tag = None
-    while True:
+    while running:
         if recv_screen is None and recv_camera is None:
             time.sleep(0.01)
         else:
@@ -102,24 +113,32 @@ def display_recv_frames(screen_socket, camera_socket):
 
 
 if __name__ == "__main__":
+    # accept connections from clients
     screen_conn, addr = server_socket_video.accept()
-    print(f"Connected by {addr}")
+    print(f"Screen service: Connected by {addr}")
     camera_conn, addr = camera_socket.accept()
-    print(f"Connected by {addr}")
+    print(f"Camera service: Connected by {addr}")
 
     running = True
     recv_screen_thread = threading.Thread(target=keep_recv_screen, args=(screen_conn, lambda: running))
     recv_camera_thread = threading.Thread(target=keep_recv_camera, args=(camera_conn, lambda: running))
+    recv_audio_thread = threading.Thread(target=keep_recv_audio, args=(audio_socket, lambda: running))
     recv_screen_thread.start()
     recv_camera_thread.start()
+    recv_audio_thread.start()
 
-    display_recv_frames(screen_conn, camera_conn)
+    display_recv_frames(screen_conn, camera_conn, lambda: running)
 
     time.sleep(10)
     running = False
+
+    recv_screen_thread.join()
+    recv_camera_thread.join()
+    recv_audio_thread.join()
 
     screen_conn.close()
     camera_conn.close()
     server_socket_video.close()
     camera_socket.close()
+    audio_socket.close()
     cv2.destroyAllWindows()

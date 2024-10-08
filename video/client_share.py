@@ -8,20 +8,28 @@ import time
 client_socket_video = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client_socket_video.connect((SERVER_IP, SERVER_PORT_main))
 
-if seperate_transmission:
-    # todo: 尝试隔离发送
-    # 一个连接发送屏幕，一个连接发送摄像头
-    camera_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    camera_socket.connect((SERVER_IP, server_port_camera))
-    # todo: 尝试声音发送，先实现直接统一按帧发送
-    # voice_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # voice_socket.connect((SERVER_IP, server_port_voice))
+
+audio = pyaudio.PyAudio()
+streamin = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+# streamout = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True, frames_per_buffer=CHUNK)
+
+# 隔离发送
+# 一个连接发送屏幕，一个连接发送摄像头
+camera_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+camera_socket.connect((SERVER_IP, server_port_camera))
+# 声音发送，先实现直接统一按帧发送
+voice_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # use UDP to transmit voice
+# voice_socket.connect((SERVER_IP, server_port_voice))
 
 
 def capture_screen():
     # 按照当前显示器的分辨率捕获整个屏幕
     img = pyautogui.screenshot()
     return img
+
+
+def capture_voice():
+    return streamin.read(CHUNK)
 
 
 camera_width, camera_height = 640, 480
@@ -59,7 +67,7 @@ def send_bytes_tcp(sock: socket.socket, bytes_data):
     return res
 
 
-def send_frames(share_screen, share_camera, fps=10):
+def send_frames(share_screen, share_camera, share_audio, fps=10):
     frame_interval = 1 / fps  # 计算每帧之间的间隔时间
     last_frame_time = time.time()
     while True:
@@ -84,6 +92,10 @@ def send_frames(share_screen, share_camera, fps=10):
                 if share_camera:
                     compressed_camera = compress_image(camera_frame)
                     send_bytes_tcp(camera_socket, compressed_camera)
+                if share_audio:
+                    # todo: 单独发送音频，频率至少要高于rate/chunk
+                    audio_data = capture_voice()
+                    voice_socket.sendto(audio_data, (SERVER_IP, server_port_voice))
             else:
                 frame_to_send = overlay_camera_on_screen(screen_frame, camera_frame)
                 # 压缩图像
@@ -95,7 +107,19 @@ def send_frames(share_screen, share_camera, fps=10):
             last_frame_time = current_time
 
 
+def send_voice(send_socket: socket.socket, fps=60):
+    frame_interval = 1 / fps  # 计算每帧之间的间隔时间
+    last_frame_time = time.time()
+    while True:
+        current_time = time.time()
+        elapsed_time = current_time - last_frame_time
+        if elapsed_time >= frame_interval:
+            audio_data = capture_voice()
+            send_socket.sendto(audio_data, (SERVER_IP, server_port_voice))
+
+            # 更新上一帧的时间
+            last_frame_time = current_time
+
+
 if __name__ == "__main__":
-    share_screen = True
-    share_camera = True
-    send_frames(share_screen, share_camera, fps=10)  # 限制帧率为10 FPS
+    send_frames(share_screen, share_camera, share_audio, fps=30)  # 限制帧率为10 FPS
