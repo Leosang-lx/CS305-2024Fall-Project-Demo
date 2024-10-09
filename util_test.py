@@ -7,6 +7,8 @@ SERVER_IP = "127.0.0.1"
 # SERVER_IP = "192.168.1.134"
 SERVER_PORT_main = 5005
 
+camera_width, camera_height = 480, 480
+
 seperate_transmission = True
 server_port_camera = 5006
 server_port_voice = 5007

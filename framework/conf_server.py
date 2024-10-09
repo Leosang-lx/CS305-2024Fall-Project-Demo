@@ -5,7 +5,7 @@ from util import *
 
 
 class ConferenceManager:
-    def __init__(self, conference_id, creator):
+    def __init__(self, conference_id, creator, service_posts):
         self.conference_id = conference_id
         self.client_manager = creator
         self.msg_sockets = {}
@@ -130,29 +130,62 @@ class ConferenceMainServer:
         self.server_socket.bind((server_ip, main_port))
         # self.server_socket.listen(1)
 
+        self.max_conference_records = 10
+
         self.active_clients = None  # self.active_clients[client_addr] = client_socket
+        self.managers = {}
         self.conference_clients = None  # self.conference_clients[conference_id] = list[client_addr]
         self.conference_conns = None
-
-    def check_creator(self, creator):
-        pass
-
-    def handle_creat_conference(self, creator):
-        """
-        生成并记录会议号，返回给创建者，并建立数据传输连接
-        """
-        if self.check_creator(creator):
-            # 创建会议
-            pass
-        else:
-            # 权限不通过，回复创建申请者创建失败
-            pass
+        self.conference_managers = {}  # self.conference_managers[conference_id] = ConferenceManager
 
     def maintain_active_clients(self):
         """
         维护self.active_clients：新来的加入到里面，主动退出以及意外断开的踢出来
         """
         pass
+
+    def check_creator(self, creator):
+        # todo: 权限的二次确认
+        return True
+
+    def gen_conference_id(self):
+        """
+        conference_id starts from 1
+        """
+        conference_id = 0
+        while True:
+            conference_id += 1
+            if conference_id < self.max_conference_records:
+                yield conference_id
+            else:
+                yield None
+
+    def gen_service_ports(self, conference_id):
+        service_port = SERVER_MAIN_PORT + 1000 * conference_id
+        # for p in ports:
+        #     assert
+        # todo: 确保这些端口没有被监听，否则要换一个（直接+1）
+        return service_port, service_port + 1, service_port + 2
+
+    def handle_creat_conference(self, creator):  # todo: creator这里具体是什么形式
+        """
+        生成并记录会议号，返回给创建者，并建立数据传输连接
+        """
+        if self.check_creator(creator):
+            # 创建会议
+            conference_id = next(self.gen_conference_id())
+            if conference_id is None:
+                self.server_socket.sendto('FAIL: no more conference'.encode(), creator)
+            else:  # 获得conference_id, server记录，分配服务的端口号
+                self.conference_clients[conference_id] = [creator]
+                ports = self.gen_service_ports(conference_id)
+                # 启动一个conference manager用于服务会议的数据转发
+                confMan = ConferenceManager()
+
+        else:
+            # 权限不通过，回复创建申请者创建失败
+            self.server_socket.sendto('FAIL: not a conference manager'.encode(), creator)
+            # pass
 
     def handle_join_conference(self, client_addr, conference_id):
         pass
@@ -167,6 +200,7 @@ class ConferenceMainServer:
         while True:
             data, addr = self.server_socket.recvfrom(DGRAM_SIZE)
             request = data.decode()
+
 
 
     def run(self):

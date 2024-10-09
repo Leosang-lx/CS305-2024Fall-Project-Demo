@@ -32,8 +32,6 @@ def capture_voice():
     return streamin.read(CHUNK)
 
 
-camera_width, camera_height = 640, 480
-
 # 初始化摄像头
 cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_width)

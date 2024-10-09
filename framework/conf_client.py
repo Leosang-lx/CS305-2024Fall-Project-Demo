@@ -71,7 +71,7 @@ class ConferenceClient:
         # 这里用udp直收后面可能会有bug
         msg = data.decode()
         fields = msg.split(' ')
-        if fields[0] == 'FAIL':
+        if fields[0] == 'FAIL:':
             print('[Reply]: server fail to create additional conference')
 
         elif len(fields) == 4 and fields[0] == 'conf_id' and fields[2] == 'port':

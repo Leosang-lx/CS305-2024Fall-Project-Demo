@@ -1,4 +1,5 @@
 import socket
+import subprocess
 
 def get_ip_address():
     # windows获取主机名
@@ -15,3 +16,7 @@ def get_ip_address():
         return ip_addresses  # 返回第一个非本地回环地址
     else:
         return None
+
+
+def is_listening(server_ip, port):
+    cmd = f'netstat | find "LISTENING" | find "{server_ip}:{port}"'
