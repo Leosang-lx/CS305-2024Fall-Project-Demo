@@ -152,11 +152,9 @@ class ConferenceMainServer:
         """
         维护self.active_clients：新来的加入到里面，主动退出以及意外断开的踢出来
         """
+        pass
 
     def handle_join_conference(self, client_addr, conference_id):
-        """
-
-        """
         pass
 
     def handle_exit_conference(self):
@@ -165,8 +163,11 @@ class ConferenceMainServer:
     def handle_cancel_conference(self):
         pass
 
-    def serve_request(self):
-        pass
+    def request_handler(self):
+        while True:
+            data, addr = self.server_socket.recvfrom(DGRAM_SIZE)
+            request = data.decode()
+
 
     def run(self):
         pass

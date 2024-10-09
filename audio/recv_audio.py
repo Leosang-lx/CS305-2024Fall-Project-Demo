@@ -6,11 +6,8 @@ RATE = 0.8
 # 创建 Opus 解码器
 decoder = pyogg.OpusDecoder(rate=RATE, channels=1)
 
-# 创建 Socket
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-# 绑定端口
 server_address = ('127.0.0.1', 10000)
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind(server_address)
 
 # 初始化 PyAudio

@@ -1,4 +1,3 @@
-import sys
 from config import *
 from util import *
 
@@ -44,70 +43,92 @@ class ConferenceClient:
         self.audio_chunk = None
         self.media_chunk = None
 
-    def recv_msg(self):
-        while self.is_working:
-            data, addr = self.main_server_sock.recvfrom(1500)
-            msg = data.decode()
-            print(f'Recv from addr {addr}: {msg}')
+    # def recv_msg(self):
+    #     while self.is_working:
+    #         data, addr = self.main_server_sock.recvfrom(1500)
+    #         msg = data.decode()
+    #         print(f'Recv from addr {addr}: {msg}')
 
     def init_conf_conns(self, port_conference):
+        """
+        进入会议时，初始化传输连接
+        """
+        pass
+
+    def close_conf_conns(self):
+        """
+        退出会议时，关闭所有该会议对应的传输连接
+        """
         pass
 
     def create_conference(self):
         """
         创建会议：向服务器发送创建会议请求，并建立该会议对应的服务器传输连接
         """
-        msg = f'create'
+        msg = f'CREATE'
         self.main_server_sock.sendto(msg.encode(), self.server_addr)
         data, addr = self.main_server_sock.recvfrom(1500)
         # 这里用udp直收后面可能会有bug
         msg = data.decode()
         fields = msg.split(' ')
-        if fields[0] == 'Fail':
-            print('Server fail to create additional conference')
+        if fields[0] == 'FAIL':
+            print('[Reply]: server fail to create additional conference')
 
-        elif len(fields) == 4 and fields[0] == 'Conf_id' and fields[2] == 'port':
+        elif len(fields) == 4 and fields[0] == 'conf_id' and fields[2] == 'port':
             # msg = "Conf_id [conference_id] port [conference_port]"
             conference_id = int(fields[1])
             port_conference = int(fields[3])
             self.conference_id = conference_id
             self.init_conf_conns(port_conference)
-            print(f'Conference is created with ID: {conference_id}')
+            print(f'[Reply]: conference is created with ID={conference_id}')
         else:
-            print(f'Warning from [create]: unknown exception with message from server "{msg}"')
+            print(f'[Warn] from CREATE: unknown exception with message from server "{msg}"')
 
     def join_conference(self, conference_id):
         """
         加入会议：
         """
-        msg = f'join {conference_id}'
+        msg = f'JOIN {conference_id}'
         self.main_server_sock.sendto(msg.encode(), self.server_addr)
+
         data, addr = self.main_server_sock.recvfrom(1500)
         # 这里用udp直收后面可能会有bug
-        msg = data.decode()
-        fields = msg.split(' ')
-        if msg == 'Conference ID Not Found':
+        reply = data.decode()
+        fields = reply.split(' ')
+        if reply == 'Conference ID Not Found':
             print('Invalid Conference ID')
         elif len(fields) == 2 and fields[0] == 'port_conference':
             port_conference = int(fields[1])
             self.init_conf_conns(port_conference)
         else:
-            print(f'Warning from [join]: unknown exception with message from server "{msg}"')
+            print(f'[Warn] from JOIN: unknown exception with message from server "{reply}"')
+
+    def quit_conference(self):
+        if self.conference_id is None:
+            print(f'[Warn]: cannot quit a conference when you are not in one')
+            return
+
+        msg = 'QUIT'
+        self.main_server_sock.sendto(msg.encode(), self.server_addr)
+        data, addr = self.main_server_sock.recvfrom(DGRAM_SIZE)
+        reply = data.decode()  # server回复后，关闭服务端对应的socket并删除client记录
+        if reply == 'OK':
+            self.close_conf_conns()  # 收到回复才关闭连接
 
     def cancel_conference(self):
         """
         取消会议：作为会议主持人取消会议（具有权限才能够成功执行该方法）向服务器发送取消会议请求
         """
         if self.conference_id is None:
-            print('Warning: cannot cancel conference when you are not in one')
+            print('[Warn]: cannot cancel conference when you are not in one')
             return
-        if not self.is_manager:
-            print('Warning: cannot cancel conference if you are not a conference manager')
+        if not self.is_manager:  # 一次权限确认，服务端会进行二次确认
+            print('[Warn]: only the conference manager can cancel a conference')
             return
 
-        msg = f'cancel {self.conference_id}'
+        msg = f'CANCEL {self.conference_id}'
         self.main_server_sock.sendto(msg.encode(), self.server_addr)
-
+        # todo: 发送给服务器后，服务器关闭通知其他会议内其他全部client，并关闭会议内所有client用于传输的socket
         pass
 
     def output(self):
