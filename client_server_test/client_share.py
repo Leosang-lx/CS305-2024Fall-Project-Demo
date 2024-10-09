@@ -107,8 +107,8 @@ def send_frames(share_screen, share_camera, share_audio, fps=10):
             last_frame_time = current_time
 
 
-def send_voice(send_socket: socket.socket, fps=60):
-    frame_interval = 1 / fps  # 计算每帧之间的间隔时间
+def send_voice(send_socket: socket.socket, frequency=60):
+    frame_interval = 1 / frequency  # 计算每帧之间的间隔时间
     last_frame_time = time.time()
     while True:
         current_time = time.time()
@@ -122,4 +122,4 @@ def send_voice(send_socket: socket.socket, fps=60):
 
 
 if __name__ == "__main__":
-    send_frames(share_screen, share_camera, share_audio, fps=30)  # 限制帧率为10 FPS
+    send_frames(share_screen, share_camera, share_audio, fps=30)
