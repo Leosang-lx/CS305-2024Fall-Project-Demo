@@ -1,3 +1,5 @@
+import socket
+
 from config import *
 from util import *
 
@@ -25,23 +27,30 @@ class ConferenceClient:
         self.is_manager = False
         self.conference_id = None
 
+        self.client_name = None
+        self.client_id = None
+
         # data transmission of meeting
+        self.screen_port = -1
+        self.camera_port = -1
+        self.audio_port = -1
+
         self.sock_screen = None
         self.sock_camera = None
         self.sock_audio = None
-        self.sock_media = None
-        self.sock_msg = None
+        # self.sock_media = None
+        # self.sock_msg = None
 
         self.share_screen = False
         self.share_camera = False
         self.share_audio = False
-        self.share_media = False
+        # self.share_media = False
 
         # output recv data (no cache)
         self.screen_frame = None
         self.camera_frame = None
         self.audio_chunk = None
-        self.media_chunk = None
+        # self.media_chunk = None
 
     # def recv_msg(self):
     #     while self.is_working:
@@ -49,11 +58,14 @@ class ConferenceClient:
     #         msg = data.decode()
     #         print(f'Recv from addr {addr}: {msg}')
 
-    def init_conf_conns(self, port_conference):
+    def init_conf_conns(self, ports_conference):
         """
         进入会议时，初始化传输连接
         """
-        pass
+        self.screen_port, self.camera_port, self.audio_port = ports_conference
+        # client_socket
+        self.sock_screen = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
 
     def close_conf_conns(self):
         """
@@ -74,13 +86,17 @@ class ConferenceClient:
         if fields[0] == 'FAIL:':
             print('[Reply]: server fail to create additional conference')
 
-        elif len(fields) == 4 and fields[0] == 'conf_id' and fields[2] == 'port':
-            # msg = "Conf_id [conference_id] port [conference_port]"
+        elif len(fields) == 6 and fields[0] == 'conf_id' and fields[2] == 'port' and fields[4] == 'client_id':
+            # msg = "conf_id [conference_id] port [conference_port] client_id [client_id]"
             conference_id = int(fields[1])
-            port_conference = int(fields[3])
+            ports_conference = (int(i) for i in fields[3].split(','))
+            client_id = int(fields[5])
             self.conference_id = conference_id
-            self.init_conf_conns(port_conference)
+            self.init_conf_conns(ports_conference)
+            self.client_id = client_id
+            self.client_name = f'user{self.client_id}'
             print(f'[Reply]: conference is created with ID={conference_id}')
+
         else:
             print(f'[Warn] from CREATE: unknown exception with message from server "{msg}"')
 
