@@ -1,127 +1,131 @@
 import threading
 import asyncio
+import time
+
 from config import *
 from util import *
 
 
-class ConferenceManager:
-    def __init__(self, conference_id, creator, service_posts):
-        self.conference_id = conference_id
-        self.client_manager = creator
-        self.msg_sockets = {}
-        self.video_sockets = {}
-        self.audio_sockets = {}
-        self.loop = None
+class DataForwardingServer:
+    def __init__(self, conf_serve_port):
+        self.stream_types = ['screen', 'camera', 'audio']
+        self.serve_ports = {
+            'screen': conf_serve_port + 1,
+            'camera': conf_serve_port + 2,
+            'audio': conf_serve_port + 3
+        }
+        self.clients = {
+            'screen': set(),
+            'camera': set(),
+            'audio': set()
+        }
+        self.servers = {}
 
-    async def handle_message(self, reader, writer):
-        client_id = len(self.msg_sockets)
-        self.msg_sockets[client_id] = writer
-
-        while True:
-            data = await reader.readline()
-            if not data:
-                break
-            message = data.decode().strip()
-            print(f"Conference {self.conference_id}: Received message from client {client_id}: {message}")
-            # 广播消息给所有客户端
-            for client_writer in self.msg_sockets.values():
-                if client_writer != writer:
-                    client_writer.write(data)
-                    await client_writer.drain()
-
-        del self.msg_sockets[client_id]
-        writer.close()
-        await writer.wait_closed()
-
-    async def handle_video_stream(self, reader, writer):
-        client_id = len(self.video_sockets)
-        self.video_sockets[client_id] = writer
-
-        while True:
-            data = await reader.read(1024)
-            if not data:
-                break
-            print(f"Conference {self.conference_id}: Received video data from client {client_id}: {len(data)} bytes")
-            # 将视频数据转发给所有其他客户端
-            for client_writer in self.video_sockets.values():
-                if client_writer != writer:
-                    client_writer.write(data)
-                    await client_writer.drain()
-
-        del self.video_sockets[client_id]
-        writer.close()
-        await writer.wait_closed()
-
-    async def handle_audio_stream(self, reader, writer):
-        client_id = len(self.audio_sockets)
-        self.audio_sockets[client_id] = (reader, writer)
-
-        while True:
-            data = await reader.read(1024)
-            if not data:
-                break
-            print(f"Conference {self.conference_id}: Received audio data from client {client_id}: {len(data)} bytes")
-            # 将音频数据转发给所有其他客户端
-            for other_client_id, (other_reader, other_writer) in self.audio_sockets.items():
-                if other_client_id != client_id:
-                    other_writer.write(data)
-                    await other_writer.drain()
-
-        del self.audio_sockets[client_id]
-        writer.close()
-        await writer.wait_closed()
-
-    async def start_server(self):
-        self.loop = asyncio.get_event_loop()
-
-        # 创建消息传输服务器
-        message_server = await asyncio.start_server(self.handle_message, '0.0.0.0', 8888 + self.conference_id * 1000)
-        addr = message_server.sockets[0].getsockname()
-        print(f'Conference {self.conference_id}: Message server serving on {addr}')
-
-        # 创建视频流传输服务器
-        video_server = await asyncio.start_server(self.handle_video_stream, '0.0.0.0', 8889 + self.conference_id * 1000)
-        addr = video_server.sockets[0].getsockname()
-        print(f'Conference {self.conference_id}: Video stream server serving on {addr}')
-
-        # 创建音频流传输服务器
-        audio_server = await asyncio.start_server(self.handle_audio_stream, '0.0.0.0', 8890 + self.conference_id * 1000)
-        addr = audio_server.sockets[0].getsockname()
-        print(f'Conference {self.conference_id}: Audio stream server serving on {addr}')
+    async def handle_client(self, reader, writer, data_type):
+        self.clients[data_type].add(writer)
+        client_address = writer.get_extra_info('peername')
+        print(f"New {data_type} connection from {client_address}")
 
         try:
-            await asyncio.gather(
-                message_server.serve_forever(),
-                video_server.serve_forever(),
-                audio_server.serve_forever()
-            )
+            while True:
+                # 读取客户端发送的数据
+                data = await reader.read(1024)  # 你可以根据实际情况调整缓冲区大小
+                if not data:
+                    break
+
+                # 转发数据给其他所有客户端
+                for client in self.clients[data_type]:
+                    if client != writer:  # 不转发给自己
+                        client.write(data)
+                        await client.drain()
+        except asyncio.CancelledError:
+            pass
         finally:
-            message_server.close()
-            video_server.close()
-            audio_server.close()
-            await asyncio.gather(
-                message_server.wait_closed(),
-                video_server.wait_closed(),
-                audio_server.wait_closed()
-            )
+            # 关闭连接并从客户端集合中移除
+            print(f"{data_type} connection closed with {client_address}")
+            self.clients[data_type].remove(writer)
+            writer.close()
+            await writer.wait_closed()
 
-    def run(self):
-        asyncio.run(self.start_server())
+    async def start_server(self, host, port, data_type):
+        server = await asyncio.start_server(
+            lambda r, w: self.handle_client(r, w, data_type), host, port
+        )
+        addr = server.sockets[0].getsockname()
+        print(f'Serving {data_type} on {addr}')
 
-# def main():
-#     conferences = [ConferenceManager(i) for i in range(5)]  # 假设有5个会议
-#
-#     threads = []
-#     for conference in conferences:
-#         thread = threading.Thread(target=conference.run)
-#         thread.start()
-#         threads.append(thread)
-#
-#     for thread in threads:
-#         thread.join()
-#
-# if __name__ == '__main__':
-#     main()
+        self.servers[data_type] = server
+
+        async with server:
+            await server.serve_forever()
+
+    async def start_all_servers(self, host):
+        tasks = [
+            self.start_server(host, self.serve_ports[stream_type], stream_type) for stream_type in self.stream_types
+        ]
+        await asyncio.gather(*tasks)
+
+
+class ConferenceManager:
+    def __init__(self, conference_id, serve_port, creator):
+        self.running = False
+
+        self.conference_id = conference_id
+        self.serve_port = serve_port
+        self.client_id_to_addr = {0: creator}
+
+        self.conf_conns = []
+        self.conference_sock = socket.create_server((SERVER_IP, self.serve_port))
+
+        self.conference_sock.settimeout(TIMEOUT_SERVER)
+        self.recv_conn_thread = threading.Thread(target=accept_conn, args=[self.conf_conns])
+
+        self.forwarding_server = DataForwardingServer(self.serve_port)
+
+        # self.client_screen = set()
+        # self.client_camera = set()
+        # self.client_audio = set()
+
+        # for i, sock in enumerate(self.listen_sockets):
+        #     sock.bind((SERVER_IP, self.serve_port + i + 1))
+        #
+        # self.forwarding_sockets = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM)] * 3
+        #
+        # self.forwarding_threads = [threading.Thread(target=self.forwarding_thread, args=thread_pair) for thread_pair in
+        #                            zip(self.listen_sockets, self.forwarding_sockets)]
+        # for forwarding_thread in self.forwarding_threads:
+        #     forwarding_thread.start()
+
+    # 启动主事件循环
+    # asyncio.run(main())
+
+    def gen_client_id(self):
+        client_id = 0
+        while True:
+            client_id += 1
+            yield client_id
+
+    def forwarding_thread(self, recv_sock: socket.socket, send_sock: socket.socket):
+        while self.running and len(self.msg_sockets) > 1:
+            if len(self.msg_sockets) > 1:
+                data, addr = recv_sock.recvfrom(1500)
+                src = addr[0]
+                for dest in self.client_id_to_addr.values():
+                    if src != dest:
+                        send_sock.sendto(data, (src, self.serve_port + 4))
+            else:
+                time.sleep(0.1)
+
+    def join_client(self, joiner):
+        ip, port = joiner
+        client_id = next(self.gen_client_id())
+        self.client_id_to_addr[client_id] = joiner
+        reply = f'port {self.serve_port} client_id {client_id}'
+        return reply
+
+    def start(self):
+        self.running = True
+        asyncio.run(self.forwarding_server.start_all_servers(SERVER_IP))
 
 
 class ConferenceMainServer:
@@ -165,7 +169,8 @@ class ConferenceMainServer:
         # for p in ports:
         #     assert
         # todo: 确保这些端口没有被监听，否则要换一个（直接+1）
-        return service_port, service_port + 1, service_port + 2
+        # msg_port, screen_port, camera_port, audio_port
+        return service_port, service_port + 1, service_port + 2, service_port + 3
 
     def handle_creat_conference(self, creator):  # todo: creator这里具体是什么形式
         """
@@ -178,19 +183,32 @@ class ConferenceMainServer:
                 self.server_socket.sendto('FAIL: no more conference'.encode(), creator)
             else:  # 获得conference_id, server记录，分配服务的端口号
                 self.conference_clients[conference_id] = [creator]
-                ports = self.gen_service_ports(conference_id)
-                # 启动一个conference manager用于服务会议的数据转发
-                confMan = ConferenceManager()
+                ports = self.gen_service_ports(conference_id)  # 要不就改成一个port
+                # 创建者的client_id是0
+                reply = f"conf_id {conference_id} port {ports} client_id {0}"
+                # todo: 启动一个conference manager用于服务会议的数据转发
+                confMan = ConferenceManager(conference_id, ports, creator)
+                confMan.start()
+                self.conference_managers[conference_id] = confMan
+                self.server_socket.sendto(reply, creator)
 
         else:
             # 权限不通过，回复创建申请者创建失败
             self.server_socket.sendto('FAIL: not a conference manager'.encode(), creator)
             # pass
 
-    def handle_join_conference(self, client_addr, conference_id):
-        pass
+    def handle_join_conference(self, joiner, conference_id):
+        if conference_id in self.conference_clients.keys():
+            # todo: 让conference manager来回复port和client_id
+            conference_manager = self.conference_managers[conference_id]
+            # todo: joiner包括ip和port，port需要确定（要不这里还是用tcp）
+            reply = f'port {conference_manager.serve_port}'
+            self.server_socket.sendto(reply.encode(), joiner)
+        else:
+            self.server_socket.sendto('Conference ID Not Found'.encode(), joiner)
 
     def handle_exit_conference(self):
+
         pass
 
     def handle_cancel_conference(self):
@@ -200,8 +218,6 @@ class ConferenceMainServer:
         while True:
             data, addr = self.server_socket.recvfrom(DGRAM_SIZE)
             request = data.decode()
-
-
 
     def run(self):
         pass

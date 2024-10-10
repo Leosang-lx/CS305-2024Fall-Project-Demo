@@ -1,6 +1,8 @@
 import cv2
 import struct
 import pyaudio
+import numpy as np
+import socket
 
 # 设置服务器地址和端口
 SERVER_IP = "127.0.0.1"
@@ -10,11 +12,12 @@ SERVER_PORT_main = 5005
 camera_width, camera_height = 480, 480
 
 seperate_transmission = True
+
 server_port_camera = 5006
 server_port_voice = 5007
 
 share_screen = True
-share_camera = True
+share_camera = False
 share_audio = False
 
 # 初始化音频
@@ -25,6 +28,33 @@ RATE = 44100  # 采样率
 
 data_header_format = 'I'
 data_header_size = struct.calcsize(data_header_format)
+
+
+def send_bytes_tcp(sock: socket.socket, bytes_data):
+    header = struct.pack(data_header_format, len(bytes_data))
+    res = sock.sendall(header + bytes_data)
+    return res
+
+
+def recv_bytes_tcp(sock: socket.socket):
+    header = struct.unpack(data_header_format, sock.recv(data_header_size))
+    data_size = header[0]
+    data = bytearray(data_size)
+    ptr = memoryview(data)
+    while data_size:
+        nrecv = sock.recv_into(buffer=ptr, nbytes=min(4096, data_size))
+        ptr = ptr[nrecv:]
+        data_size -= nrecv
+    return data
+
+
+def decompress_image(data):
+    # 解压JPEG图像数据
+    nparr = np.frombuffer(data, np.uint8)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError("解压缩图像失败")
+    return frame
 
 
 def overlay_camera_on_screen(screen_img, camera_img, position=(0, 0), resize_cam=False):
