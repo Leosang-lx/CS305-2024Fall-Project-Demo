@@ -1,3 +1,4 @@
+import io
 import socket
 import threading
 import pickle
@@ -140,18 +141,11 @@ class ConferenceClient:
         self.server_addr = (server_ip, server_port_main)
         self.ip = get_ip_address()
         self.is_working = True
-        # try:
+
         # only for short message between this client and server
-        self.main_server_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # self.main_server_sock.connect((server_ip, server_port_main))
+        self.main_server_sock = None
 
-        # except Exception as e:
-        #     print(e)
-        #     sys.exit(0)
-        # print(f'Connected to server:{server_addr}')
 
-        # meeting status
-        # self.on_meeting = False
         self.is_manager = False
         self.conference_id = None
 
@@ -176,7 +170,7 @@ class ConferenceClient:
         # self.sock_msg = None
 
         self.on_meeting = False
-        self.share_screen = False
+        self.share_screen = True
         self.share_camera = False
         self.share_audio = False
         # self.share_media = False
@@ -196,7 +190,7 @@ class ConferenceClient:
     #         msg = data.decode()
     #         print(f'Recv from addr {addr}: {msg}')
 
-    def init_conf(self, port_conference):
+    def init_conn(self, port_conference):
         """
         进入会议时，初始化传输连接
         """
@@ -205,9 +199,28 @@ class ConferenceClient:
         # client_socket
         try:
             self.conference_sock = socket.create_connection((SERVER_IP, port_conference))
+            # self.conference_sock.sendall((self.client_name + '\n').encode())
+
+            reply = recv_data(self.conference_sock)
+            fields = reply.split()
+            if len(fields) == 2 and fields[0] == 'client_id' and fields[1].isdigit():
+                print('[Reply]: Init conference conns')
+                self.on_meeting = True
+                self.client_id = int(fields[1])
+            else:
+                # 可能有错误回复
+                print(f'[Warn]: unknown response: {reply}')
+
+            time.sleep(1)
+            msg = f'{self.client_id}\n'.encode()
             self.sock_screen = socket.create_connection((SERVER_IP, self.screen_port))
+            self.sock_screen.sendall(msg)
+
             self.sock_camera = socket.create_connection((SERVER_IP, self.camera_port))
+            self.sock_camera.sendall(msg)
+
             self.sock_audio = socket.create_connection((SERVER_IP, self.audio_port))
+            self.sock_audio.sendall(msg)
 
         except Exception as e:
             print(e)
@@ -215,13 +228,7 @@ class ConferenceClient:
         # self.send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # self.recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-        reply = recv_data(self.conference_sock)
-        if reply == 'OK':
-            print('[Reply] Init conference conns')
-            self.on_meeting = True
-        else:
-            # 可能有错误回复
-            pass
+
 
     def close_conf_conns(self):
         """
@@ -233,33 +240,46 @@ class ConferenceClient:
 
         pass
 
+    def send_request(self, request: str):
+        # synchronize
+        with socket.create_connection(self.server_addr) as request_conn:
+            self.main_server_sock = request_conn
+            # data = gen_bytes(request)
+            request_conn.sendall((request + '\n').encode())
+            reply = recv_data(request_conn)
+        self.main_server_sock = None
+        return reply
+
     def create_conference(self):
         """
         创建会议：向服务器发送创建会议请求，并建立该会议对应的服务器传输连接
         """
         msg = f'CREATE'
-        self.main_server_sock.sendto(msg.encode(), self.server_addr)
-        data, addr = self.main_server_sock.recvfrom(1500)
-        # 这里用udp直收后面可能会有bug
-        msg = data.decode()
-        fields = msg.split(' ')
+        # self.main_server_sock.sendto(msg.encode(), self.server_addr)
+        # data, addr = self.main_server_sock.recvfrom(1500)
+        # # 这里用udp直收后面可能会有bug
+        reply = self.send_request(msg)
+
+        # msg = data.decode()
+        fields = reply.split(' ')
         if fields[0] == 'FAIL:':
             print('[Reply]: server fail to create additional conference')
 
-        elif len(fields) == 6 and fields[0] == 'conf_id' and fields[2] == 'port' and fields[4] == 'client_id':
+        elif len(fields) == 4 and fields[0] == 'conf_id' and fields[2] == 'port':
             # msg = "conf_id [conference_id] port [conference_port] client_id [client_id]"
             conference_id = int(fields[1])
             port_conference = int(fields[3])
-            client_id = int(fields[5])
+            # client_id = int(fields[5])
 
             self.conference_id = conference_id
-            self.client_id = client_id
+            # self.client_id = client_id
             self.client_name = f'user{self.client_id}'  # useless
 
             print(f'[Reply]: conference is created with ID={conference_id}')
 
-            self.init_conf(port_conference)
-            self.start_sharing()
+            self.init_conn(port_conference)
+            print(f'[Reply]: have joined conference with ID={conference_id}')
+            self.start_meeting()
 
         else:
             print(f'[Warn] from CREATE: unknown exception with message from server "{msg}"')
@@ -269,18 +289,21 @@ class ConferenceClient:
         加入会议：
         """
         msg = f'JOIN {conference_id}'
-        self.main_server_sock.sendto(msg.encode(), self.server_addr)
+        # self.main_server_sock.sendto(msg.encode(), self.server_addr)
+        # data, addr = self.main_server_sock.recvfrom(1500)
+        # reply = data.decode()
 
-        data, addr = self.main_server_sock.recvfrom(1500)
+        reply = self.send_request(msg)
+
         # 这里用udp直收后面可能会有bug
-        reply = data.decode()
         fields = reply.split(' ')
         if reply == 'Conference ID Not Found':
             print('Invalid Conference ID')
         elif len(fields) == 2 and fields[0] == 'port':
             port_conference = int(fields[1])
-            self.init_conf(port_conference)
-            self.start_sharing()
+            self.init_conn(port_conference)
+            print(f'[Reply]: have joined conference with ID={conference_id}')
+            self.start_meeting()
 
         else:
             print(f'[Warn] from JOIN: unknown exception with message from server "{reply}"')
@@ -372,17 +395,19 @@ class ConferenceClient:
                         last_camera_tag = self.camera_tag
                         update_camera = True
                 if update_screen or update_camera:
-                    display_frame = overlay_camera_on_screen(self.screen_frame, self.camera_frames)
-                    cv2.imshow('Recv Frames', display_frame)
+                    not_None_cameras = [ci for ci in self.camera_frames if ci is not None]
+                    # todo: what about screen_frame is None???
+                    display_frame = overlay_camera_images(self.screen_frame, not_None_cameras)
+                    cv2.imshow(f'Client{self.client_id}', display_frame)
 
     def start_meeting(self):
-        self.sock_screen = socket.create_connection((SERVER_IP, self.screen_port))
-        self.sock_camera = socket.create_connection((SERVER_IP, self.camera_port))
-        self.sock_audio = socket.create_connection((SERVER_IP, self.audio_port))
+        # self.sock_screen = socket.create_connection((SERVER_IP, self.screen_port))
+        # self.sock_camera = socket.create_connection((SERVER_IP, self.camera_port))
+        # self.sock_audio = socket.create_connection((SERVER_IP, self.audio_port))
 
         share_screen_thread = threading.Thread(target=self.share, args=('screen', self.sock_screen, capture_screen, 10))
         share_camera_thread = threading.Thread(target=self.share, args=('camera', self.sock_camera, capture_camera, 10))
-        share_audio_thread = threading.Thread(target=self.share, args=('audio', self.sock_audio, capture_audio, 45))
+        share_audio_thread = threading.Thread(target=self.share, args=('audio', self.sock_audio, capture_voice, 45))
 
         recv_screen_thread = threading.Thread(target=self.recv_screen, args=())
         recv_camera_thread = threading.Thread(target=self.recv_camera, args=())
@@ -396,7 +421,9 @@ class ConferenceClient:
         for t in share_threads:
             t.start()
 
-        self.display_frames()
+        display_threads = threading.Thread(target=self.display_frames)
+        display_threads.start()
+        # self.display_frames()
 
     def close(self):
         """
@@ -447,6 +474,10 @@ class ConferenceClient:
 
 
 if __name__ == '__main__':
-    client = ConferenceClient(SERVER_IP, SERVER_MAIN_PORT)
-    client.star
+    client1 = ConferenceClient(SERVER_IP, SERVER_MAIN_PORT)
+    client1.create_conference()
+    conference_id = client1.conference_id
+    if conference_id is not None:
+        client2 = ConferenceClient(SERVER_IP, SERVER_MAIN_PORT)
+        client2.join_conference(conference_id)
 

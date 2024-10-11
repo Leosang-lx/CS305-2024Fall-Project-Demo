@@ -4,8 +4,12 @@ import pyautogui
 import numpy as np
 import socket
 import time
+
+from PIL import Image
+
 from util_test import *
 from udp_comm import *
+from framework.util import overlay_camera_images
 
 
 if seperate_transmission:
@@ -77,7 +81,8 @@ def send_frames(share_screen, share_camera, share_audio, fps=10):
         if elapsed_time >= frame_interval:
             # 捕获屏幕
             if share_screen:
-                screen_frame = np.array(capture_screen())
+                # screen_frame = np.array(capture_screen())
+                screen_frame = capture_screen()
             else:
                 screen_frame = None
             if share_camera:
@@ -160,8 +165,9 @@ def display_recv_frames(screen_socket, running):
             #         last_camera_tag = recv_camera_tag
             #         update_camera = True
             if update_screen or update_camera:
-                display_frame = overlay_camera_on_screen(recv_screen, recv_camera)
-                cv2.imshow('Recv Frames', display_frame)
+                # display_frame = overlay_camera_on_screen(recv_screen, recv_camera)
+                display_frame = overlay_camera_images(Image.fromarray(recv_screen), [Image.fromarray(np.zeros((500, 500, 3), dtype=np.uint8))] * 8)
+                cv2.imshow('Recv Frames', np.asarray(display_frame))
 
         # 按'q'键退出
         if cv2.waitKey(1) & 0xFF == ord('q'):

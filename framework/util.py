@@ -7,21 +7,27 @@ import pyaudio
 import cv2
 import pyautogui
 import numpy as np
-
-from config import *
+from PIL import Image
+from framework.config import *
 
 FORMAT = pyaudio.paInt16  # 采样位宽16bit
 audio = pyaudio.PyAudio()
 streamin = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+streamout = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True, frames_per_buffer=CHUNK)
 
+
+# 没有摄像头会报warning
 cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_width)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_height)
 
-from PIL import Image
 
-
+# 这个代码好像没bug
 def overlay_camera_images(screen_image, camera_images):
+    """
+    screen_image: PIL.Image
+    camera_images: list[PIL.Image]
+    """
     # 确保所有camera images大小一致
     if not all(img.size == camera_images[0].size for img in camera_images):
         raise ValueError("All camera images must have the same size")
@@ -70,17 +76,18 @@ def capture_camera():
     return frame
 
 
-from PIL import Image
-# bug
-screen = capture_screen()
-data = np.asarray(screen)
-cv2.imshow('image', np.asarray(data))
-time.sleep(2)
-camera = Image.fromarray(np.zeros((500, 500, 3), dtype=np.uint8))
-mix_image = overlay_camera_images(screen, [camera] * 5)
-data = np.asarray(mix_image)
-cv2.imshow('image', np.asarray(mix_image))
-time.sleep(2)
+# from PIL import Image
+# 测试方法
+# for _ in range(600):
+#     screen = capture_screen()
+#     data = np.asarray(screen)
+#     cv2.imshow('image', np.asarray(data))
+#     time.sleep(1/60)
+# camera = Image.fromarray(np.zeros((500, 500, 3), dtype=np.uint8))
+# mix_image = overlay_camera_images(screen, [camera] * 5)
+# data = np.asarray(mix_image)
+# cv2.imshow('image', np.asarray(mix_image))
+# time.sleep(2)
 
 
 def capture_voice():
@@ -121,13 +128,18 @@ data_header_format = 'I'
 data_header_size = struct.calcsize(data_header_format)
 
 
-def send_data(send_socket: socket.socket, object, waiting=0):
-    data = pickle.dumps(object)
+def gen_bytes(obj):
+    data = pickle.dumps(obj)
     data_size = len(data)
     header = struct.pack(data_header_format, data_size)
+    return header + data
+
+
+def send_data(send_socket: socket.socket, obj, waiting=0):
+    data = gen_bytes(obj)
     if waiting:
         time.sleep(waiting)
-    res = send_socket.sendall(header + data)
+    res = send_socket.sendall(data)
     return res
 
 
@@ -147,13 +159,15 @@ def recv_data(recv_socket: socket.socket):
     return pickle.loads(data)
 
 
-def accept_conn(server_socket: socket, recv_list: list, timeout=None):
+def accept_conn(server_socket: socket, recv_list: list, timeout=None, reply=None):
     while True:
         try:
             conn, addr = server_socket.accept()
             conn.settimeout(timeout)
             recv_list.append((conn, addr[0]))  # only ip
             print(f'Recv connection from {addr}')
+            if reply:
+                send_data(conn, reply)
         except socket.timeout:
             continue
         except Exception as e:
