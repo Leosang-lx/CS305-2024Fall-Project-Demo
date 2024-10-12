@@ -23,16 +23,24 @@ class StreamWriters:
     def conn_is_ready(self):
         return None not in (self.screen_writer, self.camera_writer, self.audio_writer)
 
-    def is_cleared(self):
-        return True
+    def remove_writer(self, stream_type):
+        if stream_type == 'screen':
+            self.screen_writer = None
+        elif stream_type == 'camera':
+            self.camera_writer = None
+        elif stream_type == 'audio':
+            self.audio_writer = None
 
-    async def close(self):
-        self.screen_writer.close()
-        self.camera_writer.close()
-        self.audio_writer.close()
-        await self.screen_writer.wait_close()
-        await self.camera_writer.wait_close()
-        await self.audio_writer.wait_close()
+    def is_cleared(self):
+        return all(s is None for s in (self.screen_writer, self.camera_writer, self.audio_writer))
+
+    # async def close(self):
+    #     self.screen_writer.close()
+    #     self.camera_writer.close()
+    #     self.audio_writer.close()
+    #     await self.screen_writer.wait_close()
+    #     await self.camera_writer.wait_close()
+    #     await self.audio_writer.wait_close()
 
 
 class ConferenceServer:
@@ -65,6 +73,12 @@ class ConferenceServer:
             'screen': set(),
             'camera': set(),
             'audio': set()
+        }
+        self.max_queue = 1000
+        self.forwarding_queue = {
+            'screen': asyncio.Queue(self.max_queue),
+            'camera': asyncio.Queue(self.max_queue),
+            'audio': asyncio.Queue(self.max_queue)
         }
         self.client_writers = {}
         self.servers = {}
@@ -116,15 +130,27 @@ class ConferenceServer:
     def cancel_conference(self, ):
         pass
 
+    async def forwarding(self, stream_type):
+        recv_queue = self.forwarding_queue[stream_type]
+        data_writers = self.stream_writers[stream_type]
+        while self.running:
+            src_writer, data = await recv_queue.get()
+            for writer in data_writers:
+                if src_writer != writer:
+                    writer.write(data)
+                    print(f'Forward {stream_type} data with size {len(data)}')
+                    # await writer.drain()
+
     async def handle_stream(self, reader, writer, stream_type):
         """
         无脑转发收到的数据？：向同一连接同时写入不同数据可能会有问题
         """
-        # save writer
-        data = await reader.readline()
-        client_id = int(data.decode())
+        # save writer according to client_id
+        first_data = await reader.readline()
+        client_id = int(first_data.decode())
         data_writers = self.stream_writers[stream_type]
         data_writers.add(writer)
+
         client_address = writer.get_extra_info('peername')
         print(f"New {stream_type} connection from {client_address}")
 
@@ -132,26 +158,37 @@ class ConferenceServer:
         #     self.client_writers[client_id] = StreamWriters()
         self.client_writers[client_id].add_writer(writer, stream_type)
 
+        assert isinstance(reader, asyncio.streams.StreamReader)
         try:
+            queue = self.forwarding_queue[stream_type]
+            assert isinstance(queue, asyncio.Queue)
             while True:
                 # read any data
-                data = await reader.read(1024)  # 你可以根据实际情况调整缓冲区大小
-                if not data:
-                    break
+                data = await reader.read(data_header_size)  # 你可以根据实际情况调整缓冲区大小
+                data_size = struct.unpack(data_header_format, data)
+                data += await reader.readexactly(*data_size)
 
-                # forwarding
-                for client in data_writers:
-                    if client != writer:  # except myself
-                        client.write(data)
-                        await client.drain()
+                print(f'Recv {stream_type} with size {len(data)}')
+                # if not data:
+                #     break
+
+                await queue.put((writer, data))
+                if queue.full():
+                    print(f'[Warn]: forwarding queue of {stream_type} data is full')
+                # # forwarding
+                # for client in data_writers:
+                #     if client != writer:  # except myself
+                #         client.write(data)
+                #         await client.drain()
         except asyncio.CancelledError:
             pass
         finally:
             # 关闭连接并从客户端集合中移除
             print(f"{stream_type} connection closed with {client_id}")
             data_writers.remove(writer)
-            self.client_writers[client_id].remove(writer)
+            self.client_writers[client_id].remove_writer(stream_type)
             writer.close()
+            # todo: exception handling
             await writer.wait_closed()
 
     async def handle_client(self, reader, writer):
@@ -201,7 +238,7 @@ class ConferenceServer:
             for writer in self.msg_writers:
                 writer.write(gen_bytes(f'[Msg]: client{client_id} leave the conference'))
 
-    async def start_forwarding(self, host, port, data_type):
+    async def start_receiving(self, host, port, data_type):
         server = await asyncio.start_server(
             lambda r, w: self.handle_stream(r, w, data_type), host, port
         )
@@ -223,11 +260,15 @@ class ConferenceServer:
             await server.serve_forever()
 
     async def start_all_servers(self, host):
+        receiving_tasks = [
+            self.start_receiving(host, self.serve_ports[stream_type], stream_type) for stream_type in self.stream_types
+        ]
+        handling_task = self.start_handling(host)
         forwarding_tasks = [
-            self.start_forwarding(host, self.serve_ports[stream_type], stream_type) for stream_type in self.stream_types
+            self.forwarding(stream_type) for stream_type in self.stream_types
         ]
 
-        await asyncio.gather(*forwarding_tasks, self.start_handling(host))
+        await asyncio.gather(*receiving_tasks, handling_task, *forwarding_tasks)
 
     def start(self):
         self.running = True
@@ -248,6 +289,7 @@ class MainServer:
         # async server
         self.main_server = None
 
+        self.next_conference_id = 0
         self.max_conference_records = 2
 
         self.active_clients = None  # self.active_clients[client_addr] = client_socket
@@ -270,13 +312,11 @@ class MainServer:
         """
         conference_id starts from 1
         """
-        conference_id = 0
-        while True:
-            conference_id += 1
-            if conference_id < self.max_conference_records:
-                yield conference_id
-            else:
-                yield None
+        self.next_conference_id += 1
+        if self.next_conference_id < self.max_conference_records:
+            yield self.next_conference_id
+        else:
+            yield None
 
     def gen_service_port(self, conference_id):
         conf_serve_port = SERVER_MAIN_PORT + 1000 * conference_id

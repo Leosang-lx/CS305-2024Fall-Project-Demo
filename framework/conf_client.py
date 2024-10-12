@@ -2,6 +2,9 @@ import io
 import socket
 import threading
 import pickle
+
+import numpy as np
+
 from config import *
 from util import *
 
@@ -173,10 +176,15 @@ class ConferenceClient:
         self.share_screen = True
         self.share_camera = False
         self.share_audio = False
+        self.share_data = {
+            'screen': False,
+            'camera': False,
+            'audio': False
+        }
         # self.share_media = False
 
-        self.send_thread = None
-        self.recv_thread = None
+        self.send_threads = None
+        self.recv_threads = None
 
         # output recv data (no cache)
         self.screen_frame = None
@@ -189,6 +197,19 @@ class ConferenceClient:
     #         data, addr = self.main_server_sock.recvfrom(1500)
     #         msg = data.decode()
     #         print(f'Recv from addr {addr}: {msg}')
+
+    def share_switch(self, data_type):
+        if data_type == 'screen':
+            self.share_data[data_type] = not self.share_data[data_type]
+        elif data_type == 'camera':
+            if can_capture_camera:
+                self.share_data[data_type] = not self.share_data[data_type]
+            else:
+                self.share_data[data_type] = False
+        elif data_type == 'audio':
+            self.share_data[data_type] = not self.share_data[data_type]
+        else:
+            print(f'[Warn]: sharing {data_type} is unsupported')
 
     def init_conn(self, port_conference):
         """
@@ -227,8 +248,6 @@ class ConferenceClient:
 
         # self.send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # self.recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-
 
     def close_conf_conns(self):
         """
@@ -336,17 +355,21 @@ class ConferenceClient:
         # todo: 发送给服务器后，服务器关闭通知其他会议内其他全部client，并关闭会议内所有client用于传输的socket
         pass
 
-    def share(self, data_type: str, share_socket, capture_function, fps=10):
+    def share(self, data_type: str, share_socket, capture_function, compress=None, fps=10):
         try:
             # share_socket = socket.create_connection((SERVER_IP, port))
             print(f'[Msg] Build connection for {data_type} sharing')
 
             interval = 1 / (fps + 1)
-
+            send_cnt = 0
             while self.is_working:
-                if self.share_screen:
+                if self.share_data[data_type]:
                     capture_data = capture_function()
+                    if compress:
+                        capture_data = compress(capture_data)
                     send_data(share_socket, (self.client_id, capture_data))
+                    send_cnt += 1
+                    print(f'Send {data_type} {send_cnt}')
                     time.sleep(interval)
                 else:
                     time.sleep(0.2)
@@ -354,14 +377,21 @@ class ConferenceClient:
         except Exception as e:
             print(e)
 
-    def recv_screen(self):
+    def recv_screen(self, decompress=None):
+        recv_cnt = 0
         while self.is_working:
             client_id, frame = recv_data(self.sock_screen)
+            if decompress:
+                frame = decompress(frame)
+            recv_cnt += 1
             self.screen_frame, self.screen_tag = frame, time.perf_counter()
+            print('Recv screen', recv_cnt)
 
-    def recv_camera(self):
+    def recv_camera(self, decompress=None):
         while self.is_working:
             client_id, frame = recv_data(self.sock_camera)
+            if decompress:
+                frame = decompress(frame)
             if self.camera_frames is None:
                 self.camera_frames = [None] * 10
             self.camera_frames[client_id] = frame
@@ -395,30 +425,33 @@ class ConferenceClient:
                         last_camera_tag = self.camera_tag
                         update_camera = True
                 if update_screen or update_camera:
-                    not_None_cameras = [ci for ci in self.camera_frames if ci is not None]
-                    # todo: what about screen_frame is None???
-                    display_frame = overlay_camera_images(self.screen_frame, not_None_cameras)
-                    cv2.imshow(f'Client{self.client_id}', display_frame)
+                    if self.camera_frames:
+                        recv_cameras = [ci for ci in self.camera_frames if ci is not None]
+                    else:
+                        recv_cameras = None
+
+                    display_frame = overlay_camera_images(self.screen_frame, recv_cameras)
+                    cv2.imshow(f'Client{self.client_id}', np.array(display_frame))
 
     def start_meeting(self):
         # self.sock_screen = socket.create_connection((SERVER_IP, self.screen_port))
         # self.sock_camera = socket.create_connection((SERVER_IP, self.camera_port))
         # self.sock_audio = socket.create_connection((SERVER_IP, self.audio_port))
 
-        share_screen_thread = threading.Thread(target=self.share, args=('screen', self.sock_screen, capture_screen, 10))
-        share_camera_thread = threading.Thread(target=self.share, args=('camera', self.sock_camera, capture_camera, 10))
+        share_screen_thread = threading.Thread(target=self.share, args=('screen', self.sock_screen, capture_screen, compress_image, 10))
+        share_camera_thread = threading.Thread(target=self.share, args=('camera', self.sock_camera, capture_camera, compress_image, 10))
         share_audio_thread = threading.Thread(target=self.share, args=('audio', self.sock_audio, capture_voice, 45))
 
-        recv_screen_thread = threading.Thread(target=self.recv_screen, args=())
-        recv_camera_thread = threading.Thread(target=self.recv_camera, args=())
+        recv_screen_thread = threading.Thread(target=self.recv_screen, args=(decompress_image,))
+        recv_camera_thread = threading.Thread(target=self.recv_camera, args=(decompress_image,))
         recv_audio_thread = threading.Thread(target=self.recv_audio, args=())
 
-        recv_threads = [recv_screen_thread, recv_camera_thread, recv_audio_thread]
-        share_threads = [share_screen_thread, share_camera_thread, share_audio_thread]
-        for t in recv_threads:
+        self.recv_threads = [recv_screen_thread, recv_camera_thread, recv_audio_thread]
+        self.send_threads = [share_screen_thread, share_camera_thread, share_audio_thread]
+        for t in self.recv_threads:
             t.start()
 
-        for t in share_threads:
+        for t in self.send_threads:
             t.start()
 
         display_threads = threading.Thread(target=self.display_frames)
@@ -429,7 +462,9 @@ class ConferenceClient:
         """
         关闭所有线程以及socket
         """
-        pass
+        self.is_working = False
+        for t in [*self.send_threads, *self.recv_threads]:
+            t.join()
 
     def start(self):
         """
@@ -480,4 +515,8 @@ if __name__ == '__main__':
     if conference_id is not None:
         client2 = ConferenceClient(SERVER_IP, SERVER_MAIN_PORT)
         client2.join_conference(conference_id)
+
+        client1.share_switch('screen')
+
+
 

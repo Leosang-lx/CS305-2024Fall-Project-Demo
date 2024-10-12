@@ -3,6 +3,8 @@ import socket
 import struct
 import subprocess
 import time
+from io import BytesIO
+
 import pyaudio
 import cv2
 import pyautogui
@@ -18,9 +20,36 @@ streamout = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True,
 
 # 没有摄像头会报warning
 cap = cv2.VideoCapture(0)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_width)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_height)
+if cap.isOpened():
+    can_capture_camera = True
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_height)
+else:
+    can_capture_camera = False
 
+my_screen_size = pyautogui.size()
+
+
+def resize_image_to_fit_screen(image, my_screen_size):
+    screen_width, screen_height = my_screen_size
+
+    original_width, original_height = image.size
+
+    aspect_ratio = original_width / original_height
+
+    if screen_width / screen_height > aspect_ratio:
+        # 如果屏幕的宽高比大于图像的宽高比，则按高度缩放
+        new_height = screen_height
+        new_width = int(new_height * aspect_ratio)
+    else:
+        # 否则，按宽度缩放
+        new_width = screen_width
+        new_height = int(new_width / aspect_ratio)
+
+    # 调整图像大小
+    resized_image = image.resize((new_width, new_height), Image.LANCZOS)
+
+    return resized_image
 
 # 这个代码好像没bug
 def overlay_camera_images(screen_image, camera_images):
@@ -28,43 +57,57 @@ def overlay_camera_images(screen_image, camera_images):
     screen_image: PIL.Image
     camera_images: list[PIL.Image]
     """
-    # 确保所有camera images大小一致
-    if not all(img.size == camera_images[0].size for img in camera_images):
-        raise ValueError("All camera images must have the same size")
+    if screen_image is None and camera_images is None:
+        print('[Warn]: cannot display when screen and camera are both None')
+        return None
+    if screen_image is not None:
+        screen_image = resize_image_to_fit_screen(screen_image, my_screen_size)
 
-    # 获取screen image和camera image的尺寸
-    screen_width, screen_height = screen_image.size
-    camera_width, camera_height = camera_images[0].size
+    if camera_images is not None:
+        # 确保所有camera images大小一致
+        if not all(img.size == camera_images[0].size for img in camera_images):
+            raise ValueError("All camera images must have the same size")
 
-    # 计算每行能放多少个camera images
-    num_cameras_per_row = screen_width // camera_width
+        # 获取screen image和camera image的尺寸
+        screen_width, screen_height = my_screen_size if screen_image is None else screen_image.size
+        camera_width, camera_height = camera_images[0].size
 
-    # 如果camera images的数量超过了屏幕宽度，调整camera images的大小
-    if len(camera_images) > num_cameras_per_row:
-        adjusted_camera_width = screen_width // len(camera_images)
-        adjusted_camera_height = (adjusted_camera_width * camera_height) // camera_width
-        camera_images = [img.resize((adjusted_camera_width, adjusted_camera_height), Image.LANCZOS) for img in
-                         camera_images]
-        camera_width, camera_height = adjusted_camera_width, adjusted_camera_height
-        num_cameras_per_row = len(camera_images)
+        # 计算每行能放多少个camera images
+        num_cameras_per_row = screen_width // camera_width
+
+        # 如果camera images的数量超过了屏幕宽度，调整camera images的大小
+        if len(camera_images) > num_cameras_per_row:
+            adjusted_camera_width = screen_width // len(camera_images)
+            adjusted_camera_height = (adjusted_camera_width * camera_height) // camera_width
+            camera_images = [img.resize((adjusted_camera_width, adjusted_camera_height), Image.LANCZOS) for img in
+                             camera_images]
+            camera_width, camera_height = adjusted_camera_width, adjusted_camera_height
+            num_cameras_per_row = len(camera_images)
 
     # 创建一个新的image，用于存储结果
     # result_image = screen_image.copy()
 
-    # 按行覆盖camera images
-    for i, camera_image in enumerate(camera_images):
-        row = i // num_cameras_per_row
-        col = i % num_cameras_per_row
-        x = col * camera_width
-        y = row * camera_height
-        screen_image.paste(camera_image, (x, y))
+        # 按行覆盖camera images
+        if screen_image is None:
+            display_image = Image.fromarray(np.zeros((my_screen_size[0], camera_height, 3), dtype=np.uint8))
+        else:
+            display_image = screen_image
+        for i, camera_image in enumerate(camera_images):
+            row = i // num_cameras_per_row
+            col = i % num_cameras_per_row
+            x = col * camera_width
+            y = row * camera_height
+            display_image.paste(camera_image, (x, y))
 
-    return screen_image
+        return display_image
+    else:
+        return screen_image
 
 
 def capture_screen():
     # 按照当前显示器的分辨率捕获整个屏幕
     img = pyautogui.screenshot()
+    # img.show()
     return img
 
 
@@ -76,35 +119,64 @@ def capture_camera():
     return frame
 
 
-# from PIL import Image
-# 测试方法
-# for _ in range(600):
-#     screen = capture_screen()
-#     data = np.asarray(screen)
-#     cv2.imshow('image', np.asarray(data))
-#     time.sleep(1/60)
-# camera = Image.fromarray(np.zeros((500, 500, 3), dtype=np.uint8))
-# mix_image = overlay_camera_images(screen, [camera] * 5)
-# data = np.asarray(mix_image)
-# cv2.imshow('image', np.asarray(mix_image))
-# time.sleep(2)
-
-
 def capture_voice():
     return streamin.read(CHUNK)
 
 
-def compress_image(img):
-    # 转换为numpy数组
-    img_np = np.array(img)
-    # 转换为BGR（OpenCV默认格式）
-    frame = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+def compress_image(image, format='JPEG', quality=85):
+    """
+    压缩图像并输出为字节。
 
-    # 使用OpenCV进行JPEG压缩
-    result, encoded_image = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-    if not result:
-        raise ValueError("图像压缩失败")
-    return encoded_image.tobytes()
+    :param image: PIL.Image, 输入图像
+    :param format: str, 输出格式 ('JPEG', 'PNG', 'WEBP' 等)
+    :param quality: int, 压缩质量 (0-100), 默认为 85
+    :return: bytes, 压缩后的图像字节
+    """
+    # 使用 BytesIO 保存图像到内存
+    img_byte_arr = BytesIO()
+    image.save(img_byte_arr, format=format, quality=quality)
+
+    # 获取字节数据
+    img_byte_arr = img_byte_arr.getvalue()
+
+    return img_byte_arr
+
+
+def decompress_image(image_bytes):
+    """
+    将压缩后的图像字节解压缩并转换为 PIL.Image 对象。
+
+    :param image_bytes: bytes, 压缩后的图像字节
+    :return: PIL.Image, 解压缩后的图像
+    """
+    # 使用 BytesIO 将字节数据转换为文件对象
+    img_byte_arr = BytesIO(image_bytes)
+
+    # 从文件对象中读取图像
+    image = Image.open(img_byte_arr)
+
+    return image
+
+# def compress_image(img):
+#     # 转换为numpy数组
+#     img_np = np.array(img)
+#     # 转换为BGR（OpenCV默认格式）
+#     frame = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+#
+#     # 使用OpenCV进行JPEG压缩
+#     result, encoded_image = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+#     if not result:
+#         raise ValueError("图像压缩失败")
+#     return encoded_image.tobytes()
+#
+#
+# def decompress_image(data):
+#     # 解压JPEG图像数据
+#     nparr = np.frombuffer(data, np.uint8)
+#     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+#     if frame is None:
+#         raise ValueError("解压缩图像失败")
+#     return frame
 
 
 def get_ip_address():
