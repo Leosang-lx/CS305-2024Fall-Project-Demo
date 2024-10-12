@@ -9,14 +9,13 @@ import pyaudio
 import cv2
 import pyautogui
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageGrab
 from framework.config import *
 
 FORMAT = pyaudio.paInt16  # 采样位宽16bit
 audio = pyaudio.PyAudio()
 streamin = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
 streamout = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True, frames_per_buffer=CHUNK)
-
 
 # 没有摄像头会报warning
 cap = cv2.VideoCapture(0)
@@ -51,7 +50,8 @@ def resize_image_to_fit_screen(image, my_screen_size):
 
     return resized_image
 
-# 这个代码好像没bug
+
+# 好像没bug了
 def overlay_camera_images(screen_image, camera_images):
     """
     screen_image: PIL.Image
@@ -84,12 +84,12 @@ def overlay_camera_images(screen_image, camera_images):
             camera_width, camera_height = adjusted_camera_width, adjusted_camera_height
             num_cameras_per_row = len(camera_images)
 
-    # 创建一个新的image，用于存储结果
-    # result_image = screen_image.copy()
+        # 创建一个新的image，用于存储结果
+        # result_image = screen_image.copy()
 
         # 按行覆盖camera images
         if screen_image is None:
-            display_image = Image.fromarray(np.zeros((my_screen_size[0], camera_height, 3), dtype=np.uint8))
+            display_image = Image.fromarray(np.zeros((camera_width, my_screen_size[1], 3), dtype=np.uint8))
         else:
             display_image = screen_image
         for i, camera_image in enumerate(camera_images):
@@ -106,8 +106,8 @@ def overlay_camera_images(screen_image, camera_images):
 
 def capture_screen():
     # 按照当前显示器的分辨率捕获整个屏幕
-    img = pyautogui.screenshot()
-    # img.show()
+    # img = pyautogui.screenshot()
+    img = ImageGrab.grab()
     return img
 
 
@@ -116,7 +116,7 @@ def capture_camera():
     ret, frame = cap.read()
     if not ret:
         raise Exception('Fail to capture frame from camera')
-    return frame
+    return Image.fromarray(frame)
 
 
 def capture_voice():
@@ -156,6 +156,7 @@ def decompress_image(image_bytes):
     image = Image.open(img_byte_arr)
 
     return image
+
 
 # def compress_image(img):
 #     # 转换为numpy数组

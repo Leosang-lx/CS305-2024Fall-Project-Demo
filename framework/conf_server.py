@@ -1,7 +1,5 @@
 import threading
 import asyncio
-import time
-from config import *
 from util import *
 
 

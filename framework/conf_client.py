@@ -1,15 +1,5 @@
-import io
-import socket
-import threading
-import pickle
-
-import numpy as np
-
-from config import *
 from util import *
 
-
-import asyncio
 import threading
 import time
 
@@ -432,6 +422,8 @@ class ConferenceClient:
 
                     display_frame = overlay_camera_images(self.screen_frame, recv_cameras)
                     cv2.imshow(f'Client{self.client_id}', np.array(display_frame))
+                    cv2.waitKey(100)
+
 
     def start_meeting(self):
         # self.sock_screen = socket.create_connection((SERVER_IP, self.screen_port))
@@ -506,17 +498,35 @@ class ConferenceClient:
 
             if not recognized:
                 print(f'[Warn]: Unrecognized operation {operation}')
-
+    # def display_screen(self, fps=10):
+    #     interval = 1 / fps
+    #     while self.is_working:
+    #         frame = capture_screen()
+    #         cv2.imshow('Test screenshot', np.asarray(frame))
+    #         cv2.waitKey(100)
+    #         # time.sleep(interval)
+    #
+    # def start_display(self):
+    #     dis_thread = threading.Thread(target=self.display_screen)
+    #     dis_thread.start()
 
 if __name__ == '__main__':
     client1 = ConferenceClient(SERVER_IP, SERVER_MAIN_PORT)
+    # client1.start_display()
+
     client1.create_conference()
     conference_id = client1.conference_id
     if conference_id is not None:
         client2 = ConferenceClient(SERVER_IP, SERVER_MAIN_PORT)
         client2.join_conference(conference_id)
+        client3 = ConferenceClient(SERVER_IP, SERVER_MAIN_PORT)
+        client3.join_conference(conference_id)
 
         client1.share_switch('screen')
+        client1.share_switch('camera')
+        client2.share_switch('camera')
+        client3.share_switch('camera')
+
 
 
 

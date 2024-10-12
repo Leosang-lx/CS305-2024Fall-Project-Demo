@@ -3,6 +3,7 @@ import struct
 import pyaudio
 import numpy as np
 import socket
+from util import overlay_camera_images, compress_image, decompress_image
 
 # 设置服务器地址和端口
 SERVER_IP = "127.0.0.1"
@@ -47,14 +48,24 @@ def recv_bytes_tcp(sock: socket.socket):
         data_size -= nrecv
     return data
 
-
-def decompress_image(data):
-    # 解压JPEG图像数据
-    nparr = np.frombuffer(data, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    if frame is None:
-        raise ValueError("解压缩图像失败")
-    return frame
+# def compress_image(img):
+#     # 转换为numpy数组
+#     img_np = np.array(img)
+#     # 转换为BGR（OpenCV默认格式）
+#     frame = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+#
+#     # 使用OpenCV进行JPEG压缩
+#     result, encoded_image = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+#     if not result:
+#         raise ValueError("图像压缩失败")
+#     return encoded_image.tobytes()
+# def decompress_image(data):
+#     # 解压JPEG图像数据
+#     nparr = np.frombuffer(data, np.uint8)
+#     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+#     if frame is None:
+#         raise ValueError("解压缩图像失败")
+#     return frame
 
 
 def overlay_camera_on_screen(screen_img, camera_img, position=(0, 0), resize_cam=False):

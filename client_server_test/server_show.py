@@ -1,10 +1,7 @@
-import socket
 import time
 import threading
 import asyncio
-import numpy as np
 from util_test import *
-from framework.util import overlay_camera_images
 
 
 class VideoStreamServer:
@@ -23,12 +20,14 @@ class VideoStreamServer:
                 data = await reader.read(1024)  # 你可以根据实际情况调整缓冲区大小
                 if not data:
                     break
+                writer.write(data)
+                await writer.drain()
 
                 # 转发数据给其他所有客户端
-                for client in self.clients:
-                    # if client != writer:  # 是否转发给自己
-                    client.write(data)
-                    await client.drain()
+                # for client in self.clients:
+                #     # if client != writer:  # 是否转发给自己
+                #     client.write(data)
+                #     await client.drain()
         except asyncio.CancelledError:
             pass
         finally:
@@ -48,10 +47,17 @@ class VideoStreamServer:
         async with server:
             await server.serve_forever()
 
+    async def start_all_servers(self, host, ports):
+        tasks = [self.start_server(host, port) for port in ports]
+        await asyncio.gather(*tasks)
+
 
 # 创建服务器实例并启动
 server = VideoStreamServer()
-asyncio.run(server.start_server(SERVER_IP, SERVER_PORT_main))
+asyncio.run(server.start_all_servers(SERVER_IP, (SERVER_PORT_main, server_port_camera)))
+# tasks = [server.start_server(SERVER_IP, SERVER_PORT_main), server.start_server(SERVER_IP, server_port_camera)]
+# loop = asyncio.get_event_loop()
+# loop.run_until_complete(asyncio.gather(*tasks))
 
 audio = pyaudio.PyAudio()
 streamin = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
@@ -135,7 +141,8 @@ def display_recv_frames(screen_socket, camera_socket, running):
                     last_camera_tag = recv_camera_tag
                     update_camera = True
             if update_screen or update_camera:
-                display_frame = overlay_camera_on_screen(recv_screen, recv_camera)
+                # display_frame = overlay_camera_on_screen(recv_screen, recv_camera)
+                display_frame = overlay_camera_on_screen(recv_screen, None)
                 cv2.imshow('Recv Frames', display_frame)
 
         # 按'q'键退出

@@ -1,15 +1,13 @@
 import threading
 
 import pyautogui
-import numpy as np
-import socket
 import time
 
 from PIL import Image
 
 from util_test import *
 from udp_comm import *
-from framework.util import overlay_camera_images
+from util import overlay_camera_images
 
 
 if seperate_transmission:
@@ -55,20 +53,7 @@ def capture_camera():
     ret, frame = cap.read()
     if not ret:
         raise Exception('Fail to capture frame from camera')
-    return frame
-
-
-def compress_image(img):
-    # 转换为numpy数组
-    img_np = np.array(img)
-    # 转换为BGR（OpenCV默认格式）
-    frame = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-
-    # 使用OpenCV进行JPEG压缩
-    result, encoded_image = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
-    if not result:
-        raise ValueError("图像压缩失败")
-    return encoded_image.tobytes()
+    return Image.fromarray(frame)
 
 
 def send_frames(share_screen, share_camera, share_audio, fps=10):
@@ -133,8 +118,17 @@ def keep_recv_screen(recv_socket, running):
     global recv_screen, recv_screen_tag
     while running:
         frame = decompress_image(recv_bytes_tcp(recv_socket))
-        if frame.shape[0] > 0 and frame.shape[1] > 0:
+        if frame.size:
             recv_screen_tag, recv_screen = time.perf_counter(), frame
+        else:
+            raise ValueError("解压缩后的图像尺寸无效")
+
+def keep_recv_camera(recv_socket, running):
+    global recv_camera, recv_camera_tag
+    while running:
+        frame = decompress_image(recv_bytes_tcp(recv_socket))
+        if frame.size:
+            recv_camera_tag, recv_camera = time.perf_counter(), frame
         else:
             raise ValueError("解压缩后的图像尺寸无效")
 
@@ -142,12 +136,14 @@ recv_screen_tag = None
 recv_screen = None
 recv_camera_tag = None
 recv_camera = None
-def display_recv_frames(screen_socket, running):
+
+def display_recv_frames():
     global recv_screen
-    # global recv_camera
+    global recv_camera
     last_screen_tag = None
-    # last_camera_tag = None
-    while running:
+    last_camera_tag = None
+    # while running:
+    while True:
         # if recv_screen is None and recv_camera is None:
         if recv_screen is None:
             time.sleep(0.01)
@@ -159,29 +155,39 @@ def display_recv_frames(screen_socket, running):
                 if last_screen_tag is None or recv_screen_tag != last_screen_tag:
                     last_screen_tag = recv_screen_tag
                     update_screen = True
-            # if recv_camera is not None:
-            #     # camera_tag, camera_frames = recv_camera
-            #     if last_camera_tag is None or recv_camera_tag != last_camera_tag:
-            #         last_camera_tag = recv_camera_tag
-            #         update_camera = True
+            if recv_camera is not None:
+                # camera_tag, camera_frames = recv_camera
+                if last_camera_tag is None or recv_camera_tag != last_camera_tag:
+                    last_camera_tag = recv_camera_tag
+                    update_camera = True
             if update_screen or update_camera:
                 # display_frame = overlay_camera_on_screen(recv_screen, recv_camera)
-                display_frame = overlay_camera_images(Image.fromarray(recv_screen), [Image.fromarray(np.zeros((500, 500, 3), dtype=np.uint8))] * 8)
+                if recv_camera is not None:
+                    recv_camera = [recv_camera] * 3
+                display_frame = overlay_camera_images(recv_screen, recv_camera)
                 cv2.imshow('Recv Frames', np.asarray(display_frame))
 
         # 按'q'键退出
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-    screen_socket.close()
-    camera_socket.close()
+    # screen_socket.close()
+    # camera_socket.close()
 
 
 if __name__ == "__main__":
     # send_frames(share_screen, share_camera, share_audio, fps=30)
     running = True
     send_thread = threading.Thread(target=send_frames, args=(share_screen, share_camera, share_audio, 30))
-    recv_thread = threading.Thread(target=keep_recv_screen, args=(client_socket_video, lambda: running))
+    recv_screen_thread = threading.Thread(target=keep_recv_screen, args=(client_socket_video, lambda: running))
+    recv_screen_thread.start()
+    if share_camera:
+        recv_camera_thread = threading.Thread(target=keep_recv_camera, args=(camera_socket, lambda: running))
+        recv_camera_thread.start()
     send_thread.start()
-    recv_thread.start()
 
-    display_recv_frames(client_socket_video, lambda: running)
+    display_thread = threading.Thread(target=display_recv_frames)
+    display_thread.start()
+
+    time.sleep(5)
+    running = False
+    # display_recv_frames(lambda: running)
