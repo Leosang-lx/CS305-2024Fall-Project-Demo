@@ -382,7 +382,7 @@ class ConferenceClient:
                         capture_data = compress(capture_data)
                     send_data(share_socket, (self.client_id, capture_data))
                     send_cnt += 1
-                    # print(f'Send {data_type} {send_cnt}')
+                    print(f'Send {data_type} {send_cnt}')
                     time.sleep(interval)
                 else:
                     time.sleep(0.2)
@@ -424,6 +424,7 @@ class ConferenceClient:
         try:
             while self.is_working:
                 client_id, audio_chunk = recv_data(audio_sock)
+                print('Recv chunk', len(audio_chunk))
                 streamout.write(audio_chunk)
         except Exception as e:
             print('Exception for sock_audio:', e)
@@ -469,7 +470,7 @@ class ConferenceClient:
                                                args=('screen', self.stream_socks['screen'], capture_screen, compress_image, 10))
         share_camera_thread = threading.Thread(target=self.share,
                                                args=('camera', self.stream_socks['camera'], capture_camera, compress_image, 10))
-        share_audio_thread = threading.Thread(target=self.share, args=('audio', self.stream_socks['audio'], capture_voice, 45))
+        share_audio_thread = threading.Thread(target=self.share, args=('audio', self.stream_socks['audio'], capture_voice, None, 45))
 
         recv_screen_thread = threading.Thread(target=self.recv_screen, args=(decompress_image,))
         recv_camera_thread = threading.Thread(target=self.recv_camera, args=(decompress_image,))
@@ -553,7 +554,7 @@ if __name__ == '__main__':
     # client1.start_display()
 
     client1.create_conference()
-    client1.join_conference(1)
+    # client1.join_conference(1)
     client1.share_switch('screen')
     client1.share_switch('camera')
     client1.share_switch('audio')
