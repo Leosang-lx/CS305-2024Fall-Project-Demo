@@ -1,7 +1,10 @@
+import socket
+
 from util import *
 
 import threading
 import time
+
 
 # class Sender:
 #     def __init__(self, host, client_id, screen_port, camera_port, audio_port):
@@ -138,7 +141,6 @@ class ConferenceClient:
         # only for short message between this client and server
         self.main_server_sock = None
 
-
         self.is_manager = False
         self.conference_id = None
 
@@ -146,9 +148,11 @@ class ConferenceClient:
         self.client_id = None
 
         # data transmission of meeting
-        self.screen_port = -1
-        self.camera_port = -1
-        self.audio_port = -1
+        self.stream_ports = {
+            'screen': 0,
+            'camera': 0,
+            'audio': 0
+        }
 
         # UDP
         # self.send_sock = None
@@ -156,9 +160,14 @@ class ConferenceClient:
 
         # TCP
         self.conference_sock = None
-        self.sock_screen = None
-        self.sock_camera = None
-        self.sock_audio = None
+        self.stream_socks = {
+            'screen': None,
+            'camera': None,
+            'audio': None
+        }
+        # self.sock_screen = None
+        # self.sock_camera = None
+        # self.sock_audio = None
         # self.sock_media = None
         # self.sock_msg = None
 
@@ -206,7 +215,8 @@ class ConferenceClient:
         进入会议时，初始化传输连接
         """
 
-        self.screen_port, self.camera_port, self.audio_port = port_conference + 1, port_conference + 2, port_conference + 3,
+        for i, stream_type in enumerate(self.stream_ports.keys()):
+            self.stream_ports[stream_type] = port_conference + i + 1
         # client_socket
         try:
             self.conference_sock = socket.create_connection((SERVER_IP, port_conference))
@@ -224,14 +234,10 @@ class ConferenceClient:
 
             time.sleep(1)
             msg = f'{self.client_id}\n'.encode()
-            self.sock_screen = socket.create_connection((SERVER_IP, self.screen_port))
-            self.sock_screen.sendall(msg)
-
-            self.sock_camera = socket.create_connection((SERVER_IP, self.camera_port))
-            self.sock_camera.sendall(msg)
-
-            self.sock_audio = socket.create_connection((SERVER_IP, self.audio_port))
-            self.sock_audio.sendall(msg)
+            for stream_type in self.stream_socks.keys():
+                sock = socket.create_connection((SERVER_IP, self.stream_ports[stream_type]))
+                sock.sendall(msg)
+                self.stream_socks[stream_type] = sock
 
         except Exception as e:
             print(e)
@@ -243,11 +249,19 @@ class ConferenceClient:
         """
         退出会议时，关闭所有该会议对应的传输连接
         """
-        self.conference_id = None
-        self.conference_sock.close()
-        self.conference_sock = None
+        try:
+            self.conference_id = None
+            if self.conference_sock:
+                self.conference_sock.close()
+                self.conference_sock = None
+            for stream_type in self.stream_socks.keys():
+                sock = self.stream_socks[stream_type]
+                if sock:
+                    sock.close()
+                    self.stream_socks[stream_type] = None
 
-        pass
+        except Exception as e:
+            print('Exception in close_conf_conns:', e)
 
     def send_request(self, request: str):
         # synchronize
@@ -318,32 +332,41 @@ class ConferenceClient:
             print(f'[Warn] from JOIN: unknown exception with message from server "{reply}"')
 
     def quit_conference(self):
-        if self.conference_id is None:
+        if isinstance(self.conference_sock, socket.socket):
             print(f'[Warn]: cannot quit a conference when you are not in one')
             return
 
-        msg = 'QUIT'
-        self.main_server_sock.sendto(msg.encode(), self.server_addr)
-        data, addr = self.main_server_sock.recvfrom(DGRAM_SIZE)
-        reply = data.decode()  # server回复后，关闭服务端对应的socket并删除client记录
+        msg = 'QUIT\n'
+        self.conference_sock.sendall(msg.encode())
+        reply = recv_data(self.conference_sock)
+        reply = reply.decode()  # server回复后，关闭服务端对应的socket并删除client记录
         if reply == 'OK':
             self.close_conf_conns()  # 收到回复才关闭连接
+            self.close_threads()
+        else:
+            print(reply)
 
     def cancel_conference(self):
         """
         取消会议：作为会议主持人取消会议（具有权限才能够成功执行该方法）向服务器发送取消会议请求
         """
-        if self.conference_id is None:
+        if isinstance(self.conference_sock, socket.socket):
             print('[Warn]: cannot cancel conference when you are not in one')
             return
         if not self.is_manager:  # 一次权限确认，服务端会进行二次确认
             print('[Warn]: only the conference manager can cancel a conference')
             return
 
-        msg = f'CANCEL {self.conference_id}'
-        self.main_server_sock.sendto(msg.encode(), self.server_addr)
-        # todo: 发送给服务器后，服务器关闭通知其他会议内其他全部client，并关闭会议内所有client用于传输的socket
-        pass
+        msg = f'CANCEL\n'
+        # self.main_server_sock.sendto(msg.encode(), self.server_addr)
+        self.conference_sock.sendall(msg.encode())
+        reply = recv_data(self.conference_sock)
+        reply = reply.decode()  # server回复后，关闭服务端对应的socket并删除client记录
+        if reply == 'OK':
+            self.close_conf_conns()  # 收到回复才关闭连接
+            self.close_threads()
+        else:
+            print(reply)
 
     def share(self, data_type: str, share_socket, capture_function, compress=None, fps=10):
         try:
@@ -368,29 +391,42 @@ class ConferenceClient:
             print(e)
 
     def recv_screen(self, decompress=None):
-        recv_cnt = 0
-        while self.is_working:
-            client_id, frame = recv_data(self.sock_screen)
-            if decompress:
-                frame = decompress(frame)
-            recv_cnt += 1
-            self.screen_frame, self.screen_tag = frame, time.perf_counter()
-            print('Recv screen', recv_cnt)
+        # recv_cnt = 0
+        screen_sock = self.stream_socks['screen']
+        assert screen_sock is not None
+        try:
+            while self.is_working:
+                client_id, frame = recv_data(screen_sock)
+                if decompress:
+                    frame = decompress(frame)
+                # recv_cnt += 1
+                self.screen_frame, self.screen_tag = frame, time.perf_counter()
+                # print('Recv screen', recv_cnt)
+        except Exception as e:
+            print('Exception for sock_screen:', e)
 
     def recv_camera(self, decompress=None):
-        while self.is_working:
-            client_id, frame = recv_data(self.sock_camera)
-            if decompress:
-                frame = decompress(frame)
-            if self.camera_frames is None:
-                self.camera_frames = [None] * 10
-            self.camera_frames[client_id] = frame
-            self.camera_tag = time.perf_counter()
+        camera_sock = self.stream_socks['camera']
+        try:
+            while self.is_working:
+                client_id, frame = recv_data(camera_sock)
+                if decompress:
+                    frame = decompress(frame)
+                if self.camera_frames is None:
+                    self.camera_frames = [None] * 10
+                self.camera_frames[client_id] = frame
+                self.camera_tag = time.perf_counter()
+        except Exception as e:
+            print('Exception for sock_camera:', e)
 
     def recv_audio(self):
-        while self.is_working:
-            client_id, audio_chunk = recv_data(self.sock_audio)
-            streamout.write(audio_chunk)
+        audio_sock = self.stream_socks['audio']
+        try:
+            while self.is_working:
+                client_id, audio_chunk = recv_data(audio_sock)
+                streamout.write(audio_chunk)
+        except Exception as e:
+            print('Exception for sock_audio:', e)
 
     def display_frames(self):
         """
@@ -424,15 +460,16 @@ class ConferenceClient:
                     cv2.imshow(f'Client{self.client_id}', np.array(display_frame))
                     cv2.waitKey(100)
 
-
     def start_meeting(self):
         # self.sock_screen = socket.create_connection((SERVER_IP, self.screen_port))
         # self.sock_camera = socket.create_connection((SERVER_IP, self.camera_port))
         # self.sock_audio = socket.create_connection((SERVER_IP, self.audio_port))
 
-        share_screen_thread = threading.Thread(target=self.share, args=('screen', self.sock_screen, capture_screen, compress_image, 10))
-        share_camera_thread = threading.Thread(target=self.share, args=('camera', self.sock_camera, capture_camera, compress_image, 10))
-        share_audio_thread = threading.Thread(target=self.share, args=('audio', self.sock_audio, capture_voice, 45))
+        share_screen_thread = threading.Thread(target=self.share,
+                                               args=('screen', self.stream_socks['screen'], capture_screen, compress_image, 10))
+        share_camera_thread = threading.Thread(target=self.share,
+                                               args=('camera', self.stream_socks['camera'], capture_camera, compress_image, 10))
+        share_audio_thread = threading.Thread(target=self.share, args=('audio', self.stream_socks['audio'], capture_voice, 45))
 
         recv_screen_thread = threading.Thread(target=self.recv_screen, args=(decompress_image,))
         recv_camera_thread = threading.Thread(target=self.recv_camera, args=(decompress_image,))
@@ -450,7 +487,7 @@ class ConferenceClient:
         display_threads.start()
         # self.display_frames()
 
-    def close(self):
+    def close_threads(self):
         """
         关闭所有线程以及socket
         """
@@ -510,6 +547,7 @@ class ConferenceClient:
     #     dis_thread = threading.Thread(target=self.display_screen)
     #     dis_thread.start()
 
+
 if __name__ == '__main__':
     client1 = ConferenceClient(SERVER_IP, SERVER_MAIN_PORT)
     # client1.start_display()
@@ -527,6 +565,7 @@ if __name__ == '__main__':
         client2.share_switch('camera')
         client3.share_switch('camera')
 
-
-
+        time.sleep(10)
+        client2.quit_conference()
+        client1.cancel_conference()
 

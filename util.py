@@ -84,14 +84,12 @@ def overlay_camera_images(screen_image, camera_images):
             camera_width, camera_height = adjusted_camera_width, adjusted_camera_height
             num_cameras_per_row = len(camera_images)
 
-        # 创建一个新的image，用于存储结果
-        # result_image = screen_image.copy()
-
-        # 按行覆盖camera images
+        # 如果没有屏幕数据，则创建一个容器
         if screen_image is None:
             display_image = Image.fromarray(np.zeros((camera_width, my_screen_size[1], 3), dtype=np.uint8))
         else:
             display_image = screen_image
+        # 按行覆盖camera images
         for i, camera_image in enumerate(camera_images):
             row = i // num_cameras_per_row
             col = i % num_cameras_per_row
@@ -132,11 +130,8 @@ def compress_image(image, format='JPEG', quality=85):
     :param quality: int, 压缩质量 (0-100), 默认为 85
     :return: bytes, 压缩后的图像字节
     """
-    # 使用 BytesIO 保存图像到内存
     img_byte_arr = BytesIO()
     image.save(img_byte_arr, format=format, quality=quality)
-
-    # 获取字节数据
     img_byte_arr = img_byte_arr.getvalue()
 
     return img_byte_arr
@@ -144,15 +139,11 @@ def compress_image(image, format='JPEG', quality=85):
 
 def decompress_image(image_bytes):
     """
-    将压缩后的图像字节解压缩并转换为 PIL.Image 对象。
-
+    将压缩后的图像字节解压缩并转换为 PIL.Image对象。
     :param image_bytes: bytes, 压缩后的图像字节
     :return: PIL.Image, 解压缩后的图像
     """
-    # 使用 BytesIO 将字节数据转换为文件对象
     img_byte_arr = BytesIO(image_bytes)
-
-    # 从文件对象中读取图像
     image = Image.open(img_byte_arr)
 
     return image
@@ -249,7 +240,3 @@ def accept_conn(server_socket: socket, recv_list: list, timeout=None, reply=None
 
 def is_listening(server_ip, port):
     cmd = f'netstat | find "LISTENING" | find "{server_ip}:{port}"'
-
-
-def share(send_sock, dest):
-    pass
