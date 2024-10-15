@@ -382,7 +382,7 @@ class ConferenceClient:
                         capture_data = compress(capture_data)
                     send_data(share_socket, (self.client_id, capture_data))
                     send_cnt += 1
-                    print(f'Send {data_type} {send_cnt}')
+                    # print(f'Send {data_type} {send_cnt}')
                     time.sleep(interval)
                 else:
                     time.sleep(0.2)
@@ -553,19 +553,23 @@ if __name__ == '__main__':
     # client1.start_display()
 
     client1.create_conference()
-    conference_id = client1.conference_id
-    if conference_id is not None:
-        client2 = ConferenceClient(SERVER_IP, SERVER_MAIN_PORT)
-        client2.join_conference(conference_id)
-        client3 = ConferenceClient(SERVER_IP, SERVER_MAIN_PORT)
-        client3.join_conference(conference_id)
-
-        client1.share_switch('screen')
-        client1.share_switch('camera')
-        client2.share_switch('camera')
-        client3.share_switch('camera')
-
-        time.sleep(10)
-        client2.quit_conference()
-        client1.cancel_conference()
+    client1.join_conference(1)
+    client1.share_switch('screen')
+    client1.share_switch('camera')
+    client1.share_switch('audio')
+    # conference_id = client1.conference_id
+    # if conference_id is not None:
+    #     client2 = ConferenceClient(SERVER_IP, SERVER_MAIN_PORT)
+    #     client2.join_conference(conference_id)
+    #     client3 = ConferenceClient(SERVER_IP, SERVER_MAIN_PORT)
+    #     client3.join_conference(conference_id)
+    #
+    #     client1.share_switch('screen')
+    #     client1.share_switch('camera')
+    #     client2.share_switch('camera')
+    #     client3.share_switch('camera')
+    #
+    #     time.sleep(10)
+    #     client2.quit_conference()
+    #     client1.cancel_conference()
 
