@@ -10,7 +10,7 @@ import cv2
 import pyautogui
 import numpy as np
 from PIL import Image, ImageGrab
-from framework.config import *
+from config import *
 
 FORMAT = pyaudio.paInt16  # 采样位宽16bit
 audio = pyaudio.PyAudio()
@@ -27,6 +27,18 @@ else:
     can_capture_camera = False
 
 my_screen_size = pyautogui.size()
+
+
+def send_request(request: str, addr: tuple):
+    # synchronize
+    try:
+        with socket.create_connection(addr) as request_conn:
+            # data = gen_bytes(request)
+            request_conn.sendall((request + '\n').encode())
+            reply = recv_data(request_conn)
+        return reply
+    except Exception as e:
+        print(f'Exception for request {request}: {e}')
 
 
 def resize_image_to_fit_screen(image, my_screen_size):

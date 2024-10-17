@@ -1,9 +1,7 @@
 import cv2
 import struct
 import pyaudio
-import numpy as np
 import socket
-from util import overlay_camera_images, compress_image, decompress_image
 
 # 设置服务器地址和端口
 SERVER_IP = "127.0.0.1"

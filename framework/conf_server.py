@@ -1,5 +1,6 @@
 import threading
 import asyncio
+
 from util import *
 
 
@@ -56,11 +57,8 @@ class ConferenceServer:
         self.conference_id = conference_id
         self.serve_port = serve_port
         self.client_id_to_addr = {}
+        self.manager_id = 1
 
-        # self.conf_conns = []
-        # self.conference_sock = socket.create_server((SERVER_IP, self.serve_port))
-        # self.conference_sock.settimeout(TIMEOUT_SERVER)
-        # self.recv_conn_thread = threading.Thread(target=accept_conn, args=[self.conf_conns])
         self.next_client_id = 0
 
         self.stream_types = ['screen', 'camera', 'audio']
@@ -100,20 +98,27 @@ class ConferenceServer:
     async def quit_client(self, client_id):
         pass
 
-
     async def cancel_conference(self):
         self.running = False
         for client_id, writers in self.client_writers.items():
-            await writers.close()
-        for msg_writer in self.msg_writers:
-            msg_writer.close()
-            await msg_writer.wait_close()
-        if self.serve_task:
-            self.serve_task.cancel()
             try:
+                await writers.close()
+            except Exception as e:
+                print('Exception for cancel when close client_writer', e)
+        for msg_writer in self.msg_writers:
+            # if msg_writer is not
+            try:
+                msg_writer.close()
+                await msg_writer.wait_closed()
+            except Exception as e:
+                print('Exception for cancel when close msg_writer', e)
+        if self.serve_task:
+            try:
+                self.serve_task.cancel()
                 await self.serve_task
             except asyncio.CancelledError:
                 print("Main: Task has been cancelled")
+        send_request(f'cancel {self.conference_id}', (SERVER_IP, SERVER_MAIN_PORT))
 
     async def forwarding(self, stream_type):
         recv_queue = self.forwarding_queue[stream_type]
@@ -169,7 +174,7 @@ class ConferenceServer:
         except asyncio.CancelledError or ConnectionResetError:
             print(f"[Msg] Try close {stream_type} connection of {client_id}")
         finally:
-            # 关闭连接并从客户端集合中移除
+            # 流连接自动断开仅清楚自己的连接
             data_writers.remove(writer)
             if client_id in self.client_writers.keys():
                 self.client_writers[client_id].remove_writer(stream_type)
@@ -182,25 +187,21 @@ class ConferenceServer:
                 print(f'[Msg] {stream_type} connection of {client_id} is closed remotely')
 
     async def handle_client(self, reader, writer):
-        """
-
-        """
         # generate client_id and reply
         client_id = next(self.gen_client_id())
-        writer.write(gen_bytes(f'client_id {client_id}'))
-
         client_address = writer.get_extra_info('peername')
         self.client_id_to_addr[client_id] = client_address
+        writer.write(gen_bytes(f'client_id {client_id} present_client_ids {",".join([str(a) for a in self.client_id_to_addr.keys()])}'))
         print(f"New msg connection from {client_address}")
-        # self.msg_writers.add(writer)
         self.client_writers[client_id] = StreamWriters()
+
+        if client_id > 0:
+            for writer in self.msg_writers:  # 通知所有clients
+                writer.write(gen_bytes(f'[Msg]: client {client_id} join the conference'))
+        self.msg_writers.add(writer)
 
         while not self.client_writers[client_id].conn_is_ready():
             await asyncio.sleep(0.1)
-
-        if client_id > 0:
-            for writer in self.msg_writers:
-                writer.write(gen_bytes(f'[Msg]: client{client_id} join the conference'))
 
         try:
             while self.running:
@@ -218,8 +219,8 @@ class ConferenceServer:
                     raise ConnectionResetError(f'Close connection of client{client_id}')
                 if msg_type == 'cancel':
                     if self.manager_id == client_id:
-                        writer.write(gen_bytes('OK'))
                         await self.cancel_conference()
+                        writer.write(gen_bytes('OK'))
                     else:
                         reply = f'[Warn]: Only conference manager can cancel the conference'
                         writer.write(gen_bytes(reply))
@@ -228,25 +229,30 @@ class ConferenceServer:
                 #         writer.write()
 
         # 关闭连接
-        except asyncio.CancelledError or ConnectionResetError:
-            print(f"Main connection closed with {client_address}")
+        except asyncio.CancelledError or ConnectionResetError as e:
+            print(f"Main connection closed with {client_address}", e)
         finally:
+            # 关闭连接并从客户端集合中移除
+            if writer in self.msg_writers:
+                self.msg_writers.remove(writer)
+
+            if client_id in self.client_id_to_addr.keys():
+                del self.client_id_to_addr[client_id]
+
+            stream_writers = self.client_writers[client_id]
+            del self.client_writers[client_id]
             try:
-                # 关闭连接并从客户端集合中移除
-                # self.msg_writers.remove(writer)
-                if client_id in self.client_id_to_addr.keys():
-                    del self.client_id_to_addr[client_id]
-                stream_writers = self.client_writers[client_id]
-                del self.client_writers[client_id]
                 await stream_writers.close()
-                # if self.client_writers[client_id].is_cleared():
+            except: pass
+            # if self.client_writers[client_id].is_cleared():
+            try:
                 writer.close()
                 await writer.wait_closed()
             except ConnectionResetError:
                 pass
-            # notify other clients
-            # for writer in self.msg_writers:
-            #     writer.write(gen_bytes(f'[Msg]: client{client_id} leave the conference'))
+                # notify other clients
+            for writer in self.msg_writers:
+                writer.write(gen_bytes(f'[Msg]: client{client_id} leave the conference'))
 
     async def start_receiving(self, host, port, data_type):
         server = await asyncio.start_server(
@@ -269,6 +275,11 @@ class ConferenceServer:
         async with server:
             await server.serve_forever()
 
+    async def log(self):
+        while self.running:
+            print(f'[Log]: conference{self.conference_id}, size_of_msg_writers={len(self.msg_writers)}, size_of_client_writers={len(self.client_writers.items())}, size_of_clients={len(self.client_id_to_addr.items())}')
+            await asyncio.sleep(2)
+
     async def start_all_servers(self, host):
         receiving_tasks = [
             self.start_receiving(host, self.serve_ports[stream_type], stream_type) for stream_type in self.stream_types
@@ -277,8 +288,8 @@ class ConferenceServer:
         forwarding_tasks = [
             self.forwarding(stream_type) for stream_type in self.stream_types
         ]
-
-        await asyncio.gather(*receiving_tasks, handling_task, *forwarding_tasks)
+        log_task = self.log()
+        await asyncio.gather(*receiving_tasks, handling_task, *forwarding_tasks, log_task)
 
     def start(self):
         self.running = True
@@ -289,10 +300,12 @@ class ConferenceServer:
 class MainServer:
     def __init__(self, server_ip, main_port):
         # async server
+        self.server_ip = server_ip
+        self.server_port = main_port
         self.main_server = None
 
         self.next_conference_id = 0
-        self.max_conference_records = 2
+        self.max_conference_records = 10
 
         self.active_clients = None  # self.active_clients[client_addr] = client_socket
         self.managers = {}
@@ -353,7 +366,6 @@ class MainServer:
         会议外请求：
         """
         if conference_id in self.conference_clients.keys():
-            # todo: 让conference manager来回复port和client_id
             conference_manager = self.conference_managers[conference_id]
             # todo: joiner包括ip和port，port需要确定（要不这里还是用tcp）
             reply = f'port {conference_manager.serve_port}'
@@ -388,6 +400,16 @@ class MainServer:
                 if not data:
                     break
                 message = data.decode().strip().lower()
+
+                if client_addr[0] == self.server_ip and message.startswith('cancel'):
+                    # from conference_manager
+                    fields = message.split(max_split=1)
+                    if fields[1].isdigit:
+                        conference_id = int(fields[1])
+                        if conference_id in self.conference_managers.keys():
+                            conference_server = self.conference_managers[conference_id]
+                            del self.conference_managers[conference_id]
+                            conference_server.close()
 
                 if message.startswith("create"):
                     self.handle_creat_conference(writer)
