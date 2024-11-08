@@ -1,6 +1,4 @@
 from util import *
-import threading
-import time
 
 
 class ConferenceClient:
